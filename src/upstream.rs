@@ -60,10 +60,12 @@ impl Upstream {
     }
 }
 
-/// Where a namespaced tool name routes to.
+/// Where a namespaced tool name routes to: the owning upstream (by index, for
+/// the live connection) under its original, un-namespaced name.
 struct Route {
     upstream_index: usize,
     original_name: String,
+    server: String,
 }
 
 /// The aggregated view of all upstreams: the merged tool list Bulkhead exposes
@@ -124,6 +126,7 @@ impl Registry {
             Route {
                 upstream_index,
                 original_name,
+                server: server.to_string(),
             },
         );
         self.tools.push(namespaced);
@@ -135,14 +138,24 @@ impl Registry {
         &self.tools
     }
 
+    /// The upstream that owns a namespaced tool, if Bulkhead exposes it. Lets
+    /// callers recover the server structurally instead of re-parsing the name.
+    pub fn server_of(&self, namespaced_tool: &str) -> Option<&str> {
+        self.routes.get(namespaced_tool).map(|r| r.server.as_str())
+    }
+
     /// Route a client tool call to its owning upstream, rewriting the namespaced
-    /// name back to the upstream's original name. Returns `None` if the tool is
-    /// not one Bulkhead exposes.
+    /// name back to the upstream's original name.
     pub async fn route_call(
         &self,
         request: CallToolRequestParams,
-    ) -> Option<Result<CallToolResult, UpstreamError>> {
-        let route = self.routes.get(request.name.as_ref())?;
+    ) -> Result<CallToolResult, CallError> {
+        let route =
+            self.routes
+                .get(request.name.as_ref())
+                .ok_or_else(|| CallError::UnknownTool {
+                    tool: request.name.to_string(),
+                })?;
         let upstream = &self.upstreams[route.upstream_index];
 
         // Rewrite the namespaced name back to the upstream's own name, carrying
@@ -154,19 +167,18 @@ impl Registry {
             None => CallToolRequestParams::new(route.original_name.clone()),
         };
 
-        let result = upstream
+        upstream
             .call_tool(params)
             .await
-            .map_err(|source| UpstreamError::CallTool {
+            .map_err(|source| CallError::Upstream {
                 upstream: upstream.name().to_string(),
                 source,
-            });
-        Some(result)
+            })
     }
 }
 
-/// Failures while connecting to or talking with an upstream. Every variant
-/// names the upstream so a wrapped error never loses which server failed.
+/// Failures while connecting an upstream and building the registry. Every
+/// variant names the upstream so a wrapped error never loses which server failed.
 #[derive(Debug, thiserror::Error)]
 pub enum UpstreamError {
     #[error("failed to spawn upstream process: {0}")]
@@ -179,12 +191,6 @@ pub enum UpstreamError {
         #[source]
         source: ServiceError,
     },
-    #[error("upstream `{upstream}` failed to run tool: {source}")]
-    CallTool {
-        upstream: String,
-        #[source]
-        source: ServiceError,
-    },
     #[error("two upstreams both expose the tool `{0}`")]
     ToolNameCollision(String),
 }
@@ -193,6 +199,20 @@ impl UpstreamError {
     fn connect(error: impl std::fmt::Display) -> Self {
         UpstreamError::Connect(error.to_string())
     }
+}
+
+/// Failures routing or executing a client tool call. Distinct from build-time
+/// [`UpstreamError`]: these are the outcomes the proxy maps to MCP errors.
+#[derive(Debug, thiserror::Error)]
+pub enum CallError {
+    #[error("no upstream exposes tool `{tool}`")]
+    UnknownTool { tool: String },
+    #[error("upstream `{upstream}` failed to run tool: {source}")]
+    Upstream {
+        upstream: String,
+        #[source]
+        source: ServiceError,
+    },
 }
 
 #[cfg(test)]
@@ -251,5 +271,21 @@ mod tests {
         let route = registry.routes.get("web__fetch").unwrap();
         assert_eq!(route.original_name, "fetch");
         assert_eq!(route.upstream_index, 0);
+    }
+
+    #[test]
+    fn server_of_resolves_owner_structurally() {
+        let mut registry = Registry::empty();
+        registry.insert_tool("web", 0, tool("fetch")).unwrap();
+        assert_eq!(registry.server_of("web__fetch"), Some("web"));
+        assert_eq!(registry.server_of("mail__send"), None);
+    }
+
+    #[tokio::test]
+    async fn routing_an_unknown_tool_is_a_typed_error() {
+        let registry = Registry::empty();
+        let request = CallToolRequestParams::new("web__fetch");
+        let error = registry.route_call(request).await.unwrap_err();
+        assert!(matches!(error, CallError::UnknownTool { tool } if tool == "web__fetch"));
     }
 }

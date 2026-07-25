@@ -23,7 +23,7 @@ use std::path::Path;
 use crate::config::Config;
 use crate::invariant::{Decision, Invariants};
 use crate::ledger::Ledger;
-use crate::upstream::{Registry, UpstreamError};
+use crate::upstream::{CallError, Registry, UpstreamError};
 
 /// Bulkhead presented to the client as a single aggregating MCP server.
 ///
@@ -116,13 +116,13 @@ impl ServerHandler for BulkheadProxy {
         }
 
         match self.registry.route_call(request).await {
-            Some(Ok(result)) => Ok(result),
-            // Wrap the upstream failure so its origin is preserved, not swallowed.
-            Some(Err(error)) => Err(McpError::internal_error(error.to_string(), None)),
-            None => Err(McpError::invalid_params(
-                format!("no upstream exposes tool `{tool}`"),
-                None,
-            )),
+            Ok(result) => Ok(result),
+            // An unknown tool is a client mistake (bad params); an upstream
+            // failure is wrapped so its origin is preserved, not swallowed.
+            Err(error @ CallError::UnknownTool { .. }) => {
+                Err(McpError::invalid_params(error.to_string(), None))
+            }
+            Err(error) => Err(McpError::internal_error(error.to_string(), None)),
         }
     }
 }
