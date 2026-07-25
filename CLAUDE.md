@@ -22,8 +22,9 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 - **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
   `upstream.rs` rather than re-deriving; read crate source in the registry cache
   before using an unverified API.
-- **Live check:** point a config at `target/debug/mock_upstream`, pipe MCP
-  JSON-RPC to `bulkhead serve --config`, assert on stdout (protocol) + stderr (logs).
+- **Live check / demo:** `./demo/run.sh` runs a hermetic end-to-end session
+  (`examples/demo_session.rs` is a real MCP client) showing an allow, a deny, and
+  the ledger. Use it as the smoke test; it panics if self-protection regresses.
 
 ## Architecture rules
 
