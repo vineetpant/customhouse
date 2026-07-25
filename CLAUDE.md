@@ -6,6 +6,22 @@
 
 Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggregating proxy between an agent client and N upstream MCP servers that enforces the rule that untrusted input can't drive sensitive output. **Hard constraint: no LLM/model call and no network access exists anywhere in the enforcement path — policy evaluation is a pure function.**
 
+## Implementation map (where things are — not a changelog; git has history)
+
+- **Status:** Phase 0 (passthrough proxy). Done: aggregation + namespacing +
+  routing, §3 invariant gate. Next: append-only ledger, then Phase 1.
+- **The chokepoint** is `BulkheadProxy::call_tool` in `src/proxy.rs`: every
+  `tools/call` runs `invariants.evaluate()` before routing. Ledger and Phase 1
+  rules hang off this exact point (this is where `assess()` + ledger land next).
+- **Modules:** `proxy` (MCP server + chokepoint), `upstream` (client connections,
+  namespacing, routing, `Registry`), `invariant` (§3 gate, `Decision`), `config`
+  (`bulkhead.toml`), `bin/mock_upstream` (network-free test fixture).
+- **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
+  `upstream.rs` rather than re-deriving; read crate source in the registry cache
+  before using an unverified API.
+- **Live check:** point a config at `target/debug/mock_upstream`, pipe MCP
+  JSON-RPC to `bulkhead serve --config`, assert on stdout (protocol) + stderr (logs).
+
 ## Architecture rules
 
 - **Aggregating proxy, not a sidecar.** One chokepoint presenting as a single MCP server, multiplexing N upstreams — only it sees cross-server flows (read via web, exfil via mail). Per-server sidecars structurally cannot.
