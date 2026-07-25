@@ -1,0 +1,22 @@
+[package]
+name = "bulkhead"
+version = "0.0.0"
+edition = "2021"
+rust-version = "1.92"
+license = "Apache-2.0"
+description = "Deterministic reference monitor for the MCP tool boundary — an aggregating proxy that enforces that untrusted input cannot drive sensitive output."
+repository = "https://github.com/REPLACE_ME/bulkhead"
+
+[[bin]]
+name = "bulkhead"
+path = "src/main.rs"
+
+[lib]
+name = "bulkhead"
+path = "src/lib.rs"
+
+# Dependencies (rmcp, tokio) are added in chunk 1, pinned to exact versions,
+# once their feature flags are verified against the published crate.
+[dependencies]
+
+[dev-dependencies]
