@@ -41,10 +41,32 @@ const DENY_REASON: &str =
 
 /// The outcome of the pre-forward gate. This is the shared decision vocabulary
 /// that the ledger and the Phase 1 policy engine will reuse at the same point.
+///
+/// Client-facing by design: `reason` can end up in an MCP error the model reads,
+/// so this type deliberately carries no resolved filesystem path.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Allow,
     Deny { reason: String },
+}
+
+/// The full, operator-side result of one evaluation: the client-facing
+/// `Decision` plus the matched protected path on a deny. `matched_path` is
+/// read only by the ledger/operator side and never crosses the client boundary —
+/// the client path projects down to `decision` (see `Invariants::evaluate`).
+#[derive(Debug, Clone)]
+pub struct Assessment {
+    pub decision: Decision,
+    pub matched_path: Option<PathBuf>,
+}
+
+impl Assessment {
+    fn allow() -> Self {
+        Self {
+            decision: Decision::Allow,
+            matched_path: None,
+        }
+    }
 }
 
 /// The resolved set of paths Bulkhead protects. Built once at startup; the
@@ -66,11 +88,7 @@ impl Invariants {
     pub fn resolve(config_path: Option<&Path>) -> Self {
         let mut roots = Vec::new();
 
-        let home = match std::env::var_os("BULKHEAD_HOME") {
-            Some(value) => expand_tilde(&value.to_string_lossy()),
-            None => home_dir().unwrap_or_default().join(".bulkhead"),
-        };
-        roots.push(resolve_path(&home));
+        roots.push(resolve_path(&bulkhead_home()));
 
         if let Ok(exe) = std::env::current_exe() {
             let exe = resolve_path(&exe);
@@ -97,10 +115,11 @@ impl Invariants {
     }
 
     /// The gate. Deny the call if any path-like argument resolves onto a
-    /// protected path; otherwise allow. Pure with respect to its inputs.
-    pub fn evaluate(&self, request: &CallToolRequestParams) -> Decision {
+    /// protected path; otherwise allow. Resolves each candidate once and returns
+    /// the richer `Assessment` (operator detail included). Pure w.r.t. its inputs.
+    pub fn assess(&self, request: &CallToolRequestParams) -> Assessment {
         let Some(arguments) = &request.arguments else {
-            return Decision::Allow;
+            return Assessment::allow();
         };
 
         let mut candidates = Vec::new();
@@ -109,13 +128,23 @@ impl Invariants {
         }
 
         for raw in &candidates {
-            if self.is_protected(&resolve_target(raw)) {
-                return Decision::Deny {
-                    reason: DENY_REASON.to_string(),
+            let resolved = resolve_target(raw);
+            if self.is_protected(&resolved) {
+                return Assessment {
+                    decision: Decision::Deny {
+                        reason: DENY_REASON.to_string(),
+                    },
+                    matched_path: Some(resolved),
                 };
             }
         }
-        Decision::Allow
+        Assessment::allow()
+    }
+
+    /// Client-facing projection of `assess`: the `Decision` only, never the
+    /// matched path. Callers on the client-error path use this.
+    pub fn evaluate(&self, request: &CallToolRequestParams) -> Decision {
+        self.assess(request).decision
     }
 
     /// True if `resolved` is one of, or lives inside, a protected root. Uses
@@ -200,6 +229,17 @@ fn expand_tilde(raw: &str) -> PathBuf {
 
 fn home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// The Bulkhead home directory: `BULKHEAD_HOME`, else `~/.bulkhead`. Holds
+/// config, ledger, and pin store. Both the invariant gate (which protects it)
+/// and the ledger (which writes inside it) derive their location from here, so
+/// the ledger is protected by I1 for free — see the I-5 test in `ledger`.
+pub fn bulkhead_home() -> PathBuf {
+    match std::env::var_os("BULKHEAD_HOME") {
+        Some(value) => expand_tilde(&value.to_string_lossy()),
+        None => home_dir().unwrap_or_default().join(".bulkhead"),
+    }
 }
 
 /// A string is a path candidate if it starts with `~` or contains a separator.

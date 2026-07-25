@@ -22,6 +22,7 @@ use std::path::Path;
 
 use crate::config::Config;
 use crate::invariant::{Decision, Invariants};
+use crate::ledger::Ledger;
 use crate::upstream::{Registry, UpstreamError};
 
 /// Bulkhead presented to the client as a single aggregating MCP server.
@@ -33,22 +34,27 @@ use crate::upstream::{Registry, UpstreamError};
 pub struct BulkheadProxy {
     registry: Arc<Registry>,
     invariants: Arc<Invariants>,
+    ledger: Arc<Ledger>,
 }
 
 impl BulkheadProxy {
     /// A proxy with no upstreams; advertises an empty tool set. Self-protection
-    /// invariants are still resolved so the gate is never absent.
+    /// invariants are still resolved so the gate is never absent. The ledger is
+    /// disabled here (this constructor is for tests that never route calls).
     pub fn empty() -> Self {
         Self {
             registry: Arc::new(Registry::empty()),
             invariants: Arc::new(Invariants::resolve(None)),
+            ledger: Arc::new(Ledger::disabled()),
         }
     }
 
     /// Connect every upstream in `config` and build the aggregated proxy.
     ///
     /// `config_path` is the file `config` was loaded from, if any; it is added
-    /// to the protected set so a mediated call cannot rewrite it.
+    /// to the protected set so a mediated call cannot rewrite it. The ledger and
+    /// the invariant gate both resolve the same Bulkhead home, so the ledger is
+    /// written inside the directory the gate protects (I-5).
     pub async fn connect(
         config: &Config,
         config_path: Option<&Path>,
@@ -57,6 +63,7 @@ impl BulkheadProxy {
         Ok(Self {
             registry: Arc::new(registry),
             invariants: Arc::new(Invariants::resolve(config_path)),
+            ledger: Arc::new(Ledger::open()),
         })
     }
 
@@ -97,13 +104,13 @@ impl ServerHandler for BulkheadProxy {
     ) -> Result<CallToolResult, McpError> {
         let tool = request.name.clone();
 
-        // Self-protection invariants (§3) run before the call is forwarded to
-        // any upstream. This is the pre-forward chokepoint the ledger and the
-        // Phase 1 policy engine will also tap, in this order.
-        if let Decision::Deny { reason } = self.invariants.evaluate(&request) {
-            // Operator sees which tool was refused (a namespaced name, not tainted
-            // content); the client gets only the generic reason. Path-level detail
-            // is the ledger's job (§7.6 — never echo tainted content to the model).
+        // The pre-forward chokepoint: assess self-protection invariants (§3),
+        // record the call (allowed and denied alike), then act. The ledger reads
+        // the operator-only matched path from the assessment; the client sees
+        // only the generic Decision reason. Phase 1 rules slot in right here.
+        let assessment = self.invariants.assess(&request);
+        self.ledger.record_call(&request, &assessment);
+        if let Decision::Deny { reason } = assessment.decision {
             eprintln!("bulkhead: self-protection denied tool `{tool}`");
             return Err(McpError::invalid_params(reason, None));
         }
