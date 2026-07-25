@@ -15,10 +15,13 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
   `tools/call` runs `invariants.assess()` → `ledger.record_call()` → route. Phase 1
   rules slot in at this exact point. `evaluate()` is the client-clean projection
   of `assess()`; the operator-only matched path stays on `Assessment`.
-- **Modules:** `proxy` (MCP server + chokepoint), `upstream` (client connections,
-  namespacing, routing, `Registry`), `invariant` (§3 gate, `Decision`/`Assessment`,
-  `bulkhead_home()`), `ledger` (append-only JSONL under home), `config`
-  (`bulkhead.toml`), `bin/mock_upstream` (network-free test fixture).
+- **Modules & dependency direction** (leaves at the bottom; no lateral imports):
+  `paths` (path resolution + `bulkhead_home()`) and `config` (`bulkhead.toml`) are
+  leaves; `invariant` (§3 gate, `Decision`/`Assessment`) and `ledger` (append-only
+  JSONL) depend only on those; `upstream` (`Registry`, routing, `CallError`) depends
+  on `config`; `proxy` composes everything and owns the chokepoint. `invariant`,
+  `ledger`, and `upstream` must not import each other. `bin/mock_upstream` and
+  `examples/demo_session` are the network-free fixtures.
 - **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
   `upstream.rs` rather than re-deriving; read crate source in the registry cache
   before using an unverified API.
@@ -47,6 +50,37 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 - **`rmcp` pinned to an exact version. Never generate rmcp API calls from memory — check the pinned version's actual API first.**
 - Target MCP spec **2026-07-28** (stateless core) with **2025-11-25** compat.
 - License: Apache-2.0.
+
+## Rust design guidelines (hold the line — the codebase is structured this way)
+
+- **Module dependency direction is acyclic and points at leaves.** Leaves
+  (`paths`, `config`) import nothing from the crate; policy/record modules
+  (`invariant`, `ledger`) depend only on leaves; `proxy` is the composition root.
+  `invariant`/`ledger`/`upstream` must never import each other — if two need a
+  thing, it belongs in a leaf they both depend on (that is why `bulkhead_home`
+  lives in `paths`, not `invariant`).
+- **Typed errors per module; no `Box<dyn Error>` in library code.** Each module
+  owns a `thiserror` enum whose variants name the actual failure (build-time vs
+  call-time are different types — `UpstreamError` vs `CallError`). Preserve
+  `#[source]` chains; don't downgrade a typed source to `String`. `Box<dyn Error>`
+  is allowed only in `main`/examples, never in exported `lib` signatures.
+- **No stringly-typed domain values.** Use enums with serde renames (e.g. the
+  ledger `decision`), not `&'static str`.
+- **Never re-derive structured information from strings.** If the system already
+  holds a fact structurally (the `Registry` knows a tool's server), pass it —
+  don't re-parse `web__fetch`.
+- **Pure core, impure shell.** Keep decision logic a pure function of its inputs
+  (fs reads for canonicalization are allowed — see Corrections). Side effects
+  (ledger writes, stderr, process spawning) live at the edges.
+- **Return typed results, not `Option<Result<..>>`** or other nested-maybe shapes
+  that push branching onto callers.
+- **Client-facing vs operator-facing types stay separate by construction.**
+  `Decision` (crosses to the client) carries no path; `Assessment` (operator-only)
+  does. Don't merge them.
+- **Tests are hermetic:** tempdirs, never the real `~/.bulkhead`; a pure unit
+  should be testable without spawning a process.
+- **New dependency or newtype requires a one-line "considered and rejected"
+  rationale** in the commit or code — dep-minimalism is a security property here.
 
 ## Commit conventions
 
