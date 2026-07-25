@@ -24,7 +24,8 @@ use rmcp::model::CallToolRequestParams;
 use serde::Serialize;
 
 use crate::config::NAMESPACE_SEP;
-use crate::invariant::{bulkhead_home, Assessment, Decision};
+use crate::invariant::{Assessment, Decision};
+use crate::paths::bulkhead_home;
 
 const LEDGER_FILE: &str = "ledger.jsonl";
 

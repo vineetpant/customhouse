@@ -27,11 +27,12 @@
 //! is only knowable from the server's schema. `Decision` here is Allow/Deny only;
 //! `Escalate` arrives with the tiered policy engine in Phase 1.
 
-use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use rmcp::model::CallToolRequestParams;
 use serde_json::Value;
+
+use crate::paths::{bulkhead_home, resolve_path, resolve_target};
 
 /// Client-facing denial reason. Deliberately generic: it names no path, so a
 /// tainted argument is never echoed back into the model's context (§7.6).
@@ -157,91 +158,6 @@ impl Invariants {
     }
 }
 
-/// Resolve a raw argument string to an absolute, symlink- and `..`-resolved path.
-///
-/// Canonicalizing the *deepest existing ancestor* resolves symlinks and `..` for
-/// the real portion of the path (this is what follows a symlinked directory
-/// component into the home directory); the non-existent tail is then normalized
-/// lexically. This is the correct answer for a target that does not exist yet —
-/// plain `fs::canonicalize` fails outright on such a path.
-fn resolve_target(raw: &str) -> PathBuf {
-    resolve_path(&expand_tilde(raw))
-}
-
-fn resolve_path(input: &Path) -> PathBuf {
-    let absolute = if input.is_absolute() {
-        input.to_path_buf()
-    } else {
-        match std::env::current_dir() {
-            Ok(cwd) => cwd.join(input),
-            Err(_) => input.to_path_buf(),
-        }
-    };
-
-    let components: Vec<Component> = absolute.components().collect();
-
-    // Find the deepest existing prefix.
-    let mut existing_len = components.len();
-    while existing_len > 0 && !join_components(&components[..existing_len]).exists() {
-        existing_len -= 1;
-    }
-
-    let base = join_components(&components[..existing_len]);
-    let mut resolved = fs::canonicalize(&base).unwrap_or(base);
-
-    // Normalize the non-existent tail lexically. Nothing here exists, so there
-    // are no symlinks to follow; `..` is a pure pop against the canonical base.
-    for component in &components[existing_len..] {
-        match component {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                resolved.pop();
-            }
-            Component::Normal(name) => resolved.push(name),
-            Component::RootDir => resolved.push(std::path::MAIN_SEPARATOR_STR),
-            Component::Prefix(prefix) => resolved.push(prefix.as_os_str()),
-        }
-    }
-    resolved
-}
-
-/// Rebuild a path from components. `RootDir` re-anchors at the filesystem root.
-fn join_components(components: &[Component]) -> PathBuf {
-    let mut path = PathBuf::new();
-    for component in components {
-        path.push(component.as_os_str());
-    }
-    path
-}
-
-/// Expand a leading `~` or `~/` to the user's home. `~user` is not handled.
-fn expand_tilde(raw: &str) -> PathBuf {
-    if raw == "~" {
-        return home_dir().unwrap_or_else(|| PathBuf::from(raw));
-    }
-    if let Some(rest) = raw.strip_prefix("~/") {
-        return home_dir()
-            .map(|home| home.join(rest))
-            .unwrap_or_else(|| PathBuf::from(raw));
-    }
-    PathBuf::from(raw)
-}
-
-fn home_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
-
-/// The Bulkhead home directory: `BULKHEAD_HOME`, else `~/.bulkhead`. Holds
-/// config, ledger, and pin store. Both the invariant gate (which protects it)
-/// and the ledger (which writes inside it) derive their location from here, so
-/// the ledger is protected by I1 for free — see the I-5 test in `ledger`.
-pub fn bulkhead_home() -> PathBuf {
-    match std::env::var_os("BULKHEAD_HOME") {
-        Some(value) => expand_tilde(&value.to_string_lossy()),
-        None => home_dir().unwrap_or_default().join(".bulkhead"),
-    }
-}
-
 /// A string is a path candidate if it starts with `~` or contains a separator.
 fn is_path_like(value: &str) -> bool {
     !value.is_empty() && (value.starts_with('~') || value.contains('/'))
@@ -273,6 +189,7 @@ fn collect_path_candidates(value: &Value, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::os::unix::fs::symlink;
 
     fn call_with_path(path: &str) -> CallToolRequestParams {

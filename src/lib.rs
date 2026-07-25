@@ -7,6 +7,7 @@
 pub mod config;
 pub mod invariant;
 pub mod ledger;
+pub mod paths;
 pub mod proxy;
 pub mod upstream;
 
