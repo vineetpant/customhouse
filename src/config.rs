@@ -41,10 +41,12 @@ pub enum ConfigError {
     Read(#[source] std::io::Error),
     #[error("failed to parse config: {0}")]
     Parse(#[source] toml::de::Error),
-    /// An upstream name is empty, duplicated, or contains the namespace
-    /// separator (which would make tool routing ambiguous).
-    #[error("invalid upstream name `{0}` (must be non-empty, unique, and not contain `__`)")]
-    InvalidName(String),
+    #[error("an upstream has an empty name")]
+    EmptyName,
+    #[error("upstream name `{0}` is used more than once")]
+    DuplicateName(String),
+    #[error("upstream name `{0}` must not contain the namespace separator `{NAMESPACE_SEP}`")]
+    NameContainsSeparator(String),
 }
 
 impl Config {
@@ -67,16 +69,20 @@ impl Config {
         }
     }
 
-    /// Reject names that would break namespacing or routing.
+    /// Reject names that would break namespacing or routing, naming the exact
+    /// cause so a misconfiguration is easy to fix.
     fn validate(&self) -> Result<(), ConfigError> {
         let mut seen = std::collections::HashSet::new();
         for upstream in &self.upstreams {
             let name = upstream.name.as_str();
-            if name.is_empty() || name.contains(NAMESPACE_SEP) {
-                return Err(ConfigError::InvalidName(upstream.name.clone()));
+            if name.is_empty() {
+                return Err(ConfigError::EmptyName);
+            }
+            if name.contains(NAMESPACE_SEP) {
+                return Err(ConfigError::NameContainsSeparator(upstream.name.clone()));
             }
             if !seen.insert(name) {
-                return Err(ConfigError::InvalidName(upstream.name.clone()));
+                return Err(ConfigError::DuplicateName(upstream.name.clone()));
             }
         }
         Ok(())
@@ -128,7 +134,7 @@ mod tests {
             command = "b"
             "#,
         );
-        assert!(matches!(result, Err(ConfigError::InvalidName(_))));
+        assert!(matches!(result, Err(ConfigError::DuplicateName(name)) if name == "web"));
     }
 
     #[test]
@@ -140,7 +146,19 @@ mod tests {
             command = "a"
             "#,
         );
-        assert!(matches!(result, Err(ConfigError::InvalidName(_))));
+        assert!(matches!(result, Err(ConfigError::NameContainsSeparator(_))));
+    }
+
+    #[test]
+    fn rejects_empty_name() {
+        let result = Config::from_toml_str(
+            r#"
+            [[upstream]]
+            name = ""
+            command = "a"
+            "#,
+        );
+        assert!(matches!(result, Err(ConfigError::EmptyName)));
     }
 
     #[test]

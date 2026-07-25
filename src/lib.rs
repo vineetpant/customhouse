@@ -14,7 +14,7 @@ pub mod upstream;
 pub use config::Config;
 pub use invariant::{Assessment, Decision, Invariants};
 pub use ledger::Ledger;
-pub use proxy::{serve_stdio, BulkheadProxy};
+pub use proxy::{serve_stdio, BulkheadProxy, ServeError};
 
 /// The crate version, sourced from `Cargo.toml` at compile time.
 pub fn version() -> &'static str {

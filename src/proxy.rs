@@ -128,13 +128,21 @@ impl ServerHandler for BulkheadProxy {
     }
 }
 
+/// Failures starting or running the stdio serve loop.
+#[derive(Debug, thiserror::Error)]
+pub enum ServeError {
+    #[error(transparent)]
+    Connect(#[from] UpstreamError),
+    #[error("failed to start MCP server: {0}")]
+    Server(#[source] Box<dyn std::error::Error + Send + Sync>),
+    #[error("server task failed: {0}")]
+    Wait(#[from] tokio::task::JoinError),
+}
+
 /// Serve Bulkhead as an MCP server over stdio until the client disconnects.
 ///
 /// stdout carries the MCP protocol; all logging must go to stderr.
-pub async fn serve_stdio(
-    config: Config,
-    config_path: Option<&Path>,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn serve_stdio(config: Config, config_path: Option<&Path>) -> Result<(), ServeError> {
     let proxy = BulkheadProxy::connect(&config, config_path).await?;
     eprintln!(
         "bulkhead {}: aggregating {} upstream(s), exposing {} tool(s)",
@@ -142,7 +150,10 @@ pub async fn serve_stdio(
         config.upstreams.len(),
         proxy.tool_count(),
     );
-    let running = proxy.serve(stdio()).await?;
+    let running = proxy
+        .serve(stdio())
+        .await
+        .map_err(|e| ServeError::Server(Box::new(e)))?;
     running.waiting().await?;
     Ok(())
 }
