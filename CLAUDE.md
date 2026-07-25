@@ -32,6 +32,7 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 
 - Conventional Commits, imperative mood.
 - One logical change per commit.
+- Keep the message short: subject line, max ~2 lines total. No long bodies.
 
 ## Things to never do
 
@@ -49,3 +50,9 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
   implements **MCP 2025-11-25**, not 2026-07-28. Phase 0 pins `rmcp =2.2.0` and
   targets 2025-11-25. The design's "2026-07-28 primary" is a migration target to
   adopt when `rmcp` ships it stable (currently only in the `3.0.0-beta` line).
+- **"Pure function" includes local filesystem reads:** the §3 invariant gate
+  canonicalizes paths (resolving symlinks, `..`, `~`), which reads local FS
+  state. This is deterministic, local, and *required* by §3's symlink-resolution
+  mandate — the decision is a pure function of (arguments, filesystem state) with
+  no network or model dependency. "Pure" means no LLM/remote/nondeterminism, not
+  "cannot touch the filesystem."

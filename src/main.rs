@@ -33,8 +33,8 @@ fn main() -> ExitCode {
 }
 
 fn run_serve(rest: Vec<String>) -> ExitCode {
-    let config = match resolve_config(rest) {
-        Ok(config) => config,
+    let (config, config_path) = match resolve_config(rest) {
+        Ok(loaded) => loaded,
         Err(e) => {
             eprintln!("bulkhead: {e}");
             return ExitCode::FAILURE;
@@ -49,7 +49,7 @@ fn run_serve(rest: Vec<String>) -> ExitCode {
         }
     };
 
-    match runtime.block_on(bulkhead::serve_stdio(config)) {
+    match runtime.block_on(bulkhead::serve_stdio(config, config_path.as_deref())) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("bulkhead: {e}");
@@ -58,8 +58,9 @@ fn run_serve(rest: Vec<String>) -> ExitCode {
     }
 }
 
-/// Parse `serve`'s arguments and load the resulting configuration.
-fn resolve_config(rest: Vec<String>) -> Result<Config, String> {
+/// Parse `serve`'s arguments and load the resulting configuration, returning it
+/// alongside the path it was loaded from (if any) so the path can be protected.
+fn resolve_config(rest: Vec<String>) -> Result<(Config, Option<PathBuf>), String> {
     let mut explicit_path: Option<PathBuf> = None;
     let mut args = rest.into_iter();
     while let Some(arg) = args.next() {
@@ -83,7 +84,8 @@ fn resolve_config(rest: Vec<String>) -> Result<Config, String> {
         },
     };
 
-    Config::load(path.as_deref()).map_err(|e| e.to_string())
+    let config = Config::load(path.as_deref()).map_err(|e| e.to_string())?;
+    Ok((config, path))
 }
 
 fn print_usage() {

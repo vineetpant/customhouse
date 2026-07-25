@@ -18,31 +18,45 @@ use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
 
+use std::path::Path;
+
 use crate::config::Config;
+use crate::invariant::{Decision, Invariants};
 use crate::upstream::{Registry, UpstreamError};
 
 /// Bulkhead presented to the client as a single aggregating MCP server.
 ///
-/// Cheap to clone: the shared registry of upstream connections lives behind an
-/// `Arc`, so the proxy can be handed to the MCP service by value.
+/// Cheap to clone: the shared registry of upstream connections and the resolved
+/// self-protection invariants live behind `Arc`s, so the proxy can be handed to
+/// the MCP service by value.
 #[derive(Clone)]
 pub struct BulkheadProxy {
     registry: Arc<Registry>,
+    invariants: Arc<Invariants>,
 }
 
 impl BulkheadProxy {
-    /// A proxy with no upstreams; advertises an empty tool set.
+    /// A proxy with no upstreams; advertises an empty tool set. Self-protection
+    /// invariants are still resolved so the gate is never absent.
     pub fn empty() -> Self {
         Self {
             registry: Arc::new(Registry::empty()),
+            invariants: Arc::new(Invariants::resolve(None)),
         }
     }
 
     /// Connect every upstream in `config` and build the aggregated proxy.
-    pub async fn connect(config: &Config) -> Result<Self, UpstreamError> {
+    ///
+    /// `config_path` is the file `config` was loaded from, if any; it is added
+    /// to the protected set so a mediated call cannot rewrite it.
+    pub async fn connect(
+        config: &Config,
+        config_path: Option<&Path>,
+    ) -> Result<Self, UpstreamError> {
         let registry = Registry::connect(&config.upstreams).await?;
         Ok(Self {
             registry: Arc::new(registry),
+            invariants: Arc::new(Invariants::resolve(config_path)),
         })
     }
 
@@ -82,6 +96,18 @@ impl ServerHandler for BulkheadProxy {
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
         let tool = request.name.clone();
+
+        // Self-protection invariants (§3) run before the call is forwarded to
+        // any upstream. This is the pre-forward chokepoint the ledger and the
+        // Phase 1 policy engine will also tap, in this order.
+        if let Decision::Deny { reason } = self.invariants.evaluate(&request) {
+            // Operator sees which tool was refused (a namespaced name, not tainted
+            // content); the client gets only the generic reason. Path-level detail
+            // is the ledger's job (§7.6 — never echo tainted content to the model).
+            eprintln!("bulkhead: self-protection denied tool `{tool}`");
+            return Err(McpError::invalid_params(reason, None));
+        }
+
         match self.registry.route_call(request).await {
             Some(Ok(result)) => Ok(result),
             // Wrap the upstream failure so its origin is preserved, not swallowed.
@@ -97,8 +123,11 @@ impl ServerHandler for BulkheadProxy {
 /// Serve Bulkhead as an MCP server over stdio until the client disconnects.
 ///
 /// stdout carries the MCP protocol; all logging must go to stderr.
-pub async fn serve_stdio(config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let proxy = BulkheadProxy::connect(&config).await?;
+pub async fn serve_stdio(
+    config: Config,
+    config_path: Option<&Path>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let proxy = BulkheadProxy::connect(&config, config_path).await?;
     eprintln!(
         "bulkhead {}: aggregating {} upstream(s), exposing {} tool(s)",
         crate::version(),
