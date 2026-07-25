@@ -1,48 +1,63 @@
 //! The aggregating MCP proxy.
 //!
-//! Chunk 1: a valid MCP stdio server that presents Bulkhead as a single server
-//! and exposes an (empty) aggregated tool list. Upstream connection and
-//! namespacing land in chunk 2; policy stays hardwired to allow through Phase 0.
+//! `BulkheadProxy` presents Bulkhead to the client as a single MCP server that
+//! exposes the merged, namespaced tools of its upstream servers and routes each
+//! call back to the owning upstream. Policy is not yet enforced here — the proxy
+//! passes calls through — but this is the single chokepoint every future
+//! decision runs at.
+
+use std::sync::Arc;
 
 use rmcp::{
-    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
     model::{
         CallToolRequestParams, CallToolResult, Implementation, ListToolsResult,
-        PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo, Tool,
+        PaginatedRequestParams, ProtocolVersion, ServerCapabilities, ServerInfo,
     },
     service::RequestContext,
     transport::stdio,
+    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
 
+use crate::config::Config;
+use crate::upstream::{Registry, UpstreamError};
+
 /// Bulkhead presented to the client as a single aggregating MCP server.
-#[derive(Debug, Default, Clone)]
+///
+/// Cheap to clone: the shared registry of upstream connections lives behind an
+/// `Arc`, so the proxy can be handed to the MCP service by value.
+#[derive(Clone)]
 pub struct BulkheadProxy {
-    // Upstream servers and their namespaced tools land here in chunk 2.
+    registry: Arc<Registry>,
 }
 
 impl BulkheadProxy {
-    pub fn new() -> Self {
-        Self::default()
+    /// A proxy with no upstreams; advertises an empty tool set.
+    pub fn empty() -> Self {
+        Self {
+            registry: Arc::new(Registry::empty()),
+        }
     }
 
-    /// Every tool Bulkhead exposes to the client, already namespaced by
-    /// upstream (`web__fetch`, ...). Pure and directly unit-testable so the
-    /// aggregation logic never needs a live MCP client to verify. Empty until
-    /// chunk 2 wires the first upstream.
-    pub fn aggregated_tools(&self) -> Vec<Tool> {
-        Vec::new()
+    /// Connect every upstream in `config` and build the aggregated proxy.
+    pub async fn connect(config: &Config) -> Result<Self, UpstreamError> {
+        let registry = Registry::connect(&config.upstreams).await?;
+        Ok(Self {
+            registry: Arc::new(registry),
+        })
+    }
+
+    /// Number of tools currently exposed to the client.
+    pub fn tool_count(&self) -> usize {
+        self.registry.tools().len()
     }
 
     /// The identity Bulkhead presents to clients on initialize.
     pub fn server_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
-            // MCP 2025-11-25 (ProtocolVersion::LATEST in rmcp 2.2.0). 2026-07-28
-            // is a migration target once rmcp ships it (see CLAUDE.md).
+            // MCP 2025-11-25 (ProtocolVersion::LATEST in rmcp 2.2.0).
             .with_protocol_version(ProtocolVersion::LATEST)
             .with_server_info(Implementation::new("bulkhead", crate::version()))
-            .with_instructions(
-                "Bulkhead: deterministic MCP proxy. Phase 0 passthrough; no upstreams wired yet.",
-            )
+            .with_instructions("Bulkhead: a deterministic proxy over your MCP servers.")
     }
 }
 
@@ -56,9 +71,9 @@ impl ServerHandler for BulkheadProxy {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListToolsResult, McpError> {
-        let mut result = ListToolsResult::default();
-        result.tools = self.aggregated_tools();
-        Ok(result)
+        Ok(ListToolsResult::with_all_items(
+            self.registry.tools().to_vec(),
+        ))
     }
 
     async fn call_tool(
@@ -66,19 +81,30 @@ impl ServerHandler for BulkheadProxy {
         request: CallToolRequestParams,
         _context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, McpError> {
-        // No upstreams to route to yet; refuse clearly rather than pretend.
-        Err(McpError::invalid_request(
-            format!("bulkhead: no upstream provides tool `{}` (chunk 1)", request.name),
-            None,
-        ))
+        let tool = request.name.clone();
+        match self.registry.route_call(request).await {
+            Some(Ok(result)) => Ok(result),
+            // Wrap the upstream failure so its origin is preserved, not swallowed.
+            Some(Err(error)) => Err(McpError::internal_error(error.to_string(), None)),
+            None => Err(McpError::invalid_params(
+                format!("no upstream exposes tool `{tool}`"),
+                None,
+            )),
+        }
     }
 }
 
 /// Serve Bulkhead as an MCP server over stdio until the client disconnects.
 ///
 /// stdout carries the MCP protocol; all logging must go to stderr.
-pub async fn serve_stdio() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let proxy = BulkheadProxy::new();
+pub async fn serve_stdio(config: Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let proxy = BulkheadProxy::connect(&config).await?;
+    eprintln!(
+        "bulkhead {}: aggregating {} upstream(s), exposing {} tool(s)",
+        crate::version(),
+        config.upstreams.len(),
+        proxy.tool_count(),
+    );
     let running = proxy.serve(stdio()).await?;
     running.waiting().await?;
     Ok(())
@@ -90,32 +116,25 @@ mod tests {
 
     #[test]
     fn presents_as_bulkhead() {
-        let info = BulkheadProxy::new().server_info();
+        let info = BulkheadProxy::empty().server_info();
         assert_eq!(info.server_info.name, "bulkhead");
         assert_eq!(info.server_info.version, crate::version());
     }
 
     #[test]
     fn negotiates_supported_protocol_version() {
-        let info = BulkheadProxy::new().server_info();
-        // Pinned rmcp 2.2.0 speaks MCP 2025-11-25.
+        let info = BulkheadProxy::empty().server_info();
         assert_eq!(info.protocol_version, ProtocolVersion::V_2025_11_25);
     }
 
     #[test]
     fn advertises_tools_capability() {
-        let info = BulkheadProxy::new().server_info();
-        assert!(info.capabilities.tools.is_some(), "must advertise tools capability");
+        let info = BulkheadProxy::empty().server_info();
+        assert!(info.capabilities.tools.is_some());
     }
 
     #[test]
-    fn exposes_no_tools_before_upstreams() {
-        assert!(BulkheadProxy::new().aggregated_tools().is_empty());
-    }
-
-    #[test]
-    fn get_info_matches_server_info() {
-        let proxy = BulkheadProxy::new();
-        assert_eq!(proxy.get_info().server_info.name, proxy.server_info().server_info.name);
+    fn empty_proxy_exposes_no_tools() {
+        assert_eq!(BulkheadProxy::empty().tool_count(), 0);
     }
 }

@@ -1,9 +1,15 @@
 //! Bulkhead binary entry point.
 //!
-//! `bulkhead serve` (or no argument) runs the aggregating MCP proxy over stdio.
+//! `bulkhead serve [--config <path>]` runs the aggregating MCP proxy over stdio.
 //! stdout carries the MCP protocol; diagnostics go to stderr.
 
+use std::path::PathBuf;
 use std::process::ExitCode;
+
+use bulkhead::Config;
+
+/// Config file consulted when `--config` is not given, if it exists.
+const DEFAULT_CONFIG_PATH: &str = "bulkhead.toml";
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
@@ -17,7 +23,7 @@ fn main() -> ExitCode {
             print_usage();
             ExitCode::SUCCESS
         }
-        None | Some("serve") => run_serve(),
+        None | Some("serve") => run_serve(args.collect()),
         Some(other) => {
             eprintln!("bulkhead: unknown argument `{other}`");
             print_usage();
@@ -26,7 +32,15 @@ fn main() -> ExitCode {
     }
 }
 
-fn run_serve() -> ExitCode {
+fn run_serve(rest: Vec<String>) -> ExitCode {
+    let config = match resolve_config(rest) {
+        Ok(config) => config,
+        Err(e) => {
+            eprintln!("bulkhead: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
@@ -35,8 +49,7 @@ fn run_serve() -> ExitCode {
         }
     };
 
-    eprintln!("bulkhead {}: serving MCP proxy on stdio", bulkhead::version());
-    match runtime.block_on(bulkhead::serve_stdio()) {
+    match runtime.block_on(bulkhead::serve_stdio(config)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("bulkhead: {e}");
@@ -45,7 +58,36 @@ fn run_serve() -> ExitCode {
     }
 }
 
+/// Parse `serve`'s arguments and load the resulting configuration.
+fn resolve_config(rest: Vec<String>) -> Result<Config, String> {
+    let mut explicit_path: Option<PathBuf> = None;
+    let mut args = rest.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--config" | "-c" => {
+                let path = args
+                    .next()
+                    .ok_or_else(|| "--config requires a path".to_string())?;
+                explicit_path = Some(PathBuf::from(path));
+            }
+            other => return Err(format!("unknown argument `{other}`")),
+        }
+    }
+
+    // An explicit path must exist; the default path is used only if present.
+    let path = match explicit_path {
+        Some(path) => Some(path),
+        None => match PathBuf::from(DEFAULT_CONFIG_PATH) {
+            path if path.exists() => Some(path),
+            _ => None,
+        },
+    };
+
+    Config::load(path.as_deref()).map_err(|e| e.to_string())
+}
+
 fn print_usage() {
-    eprintln!("Usage: bulkhead [serve | --version | --help]");
+    eprintln!("Usage: bulkhead [serve [--config <path>] | --version | --help]");
     eprintln!("  serve   Run the aggregating MCP proxy over stdio (default)");
+    eprintln!("  --config <path>   Upstream servers to aggregate (default: bulkhead.toml)");
 }
