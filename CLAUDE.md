@@ -8,13 +8,16 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 
 ## Implementation map (where things are — not a changelog; git has history)
 
-- **Status:** Phase 0 (passthrough proxy). Done: aggregation + namespacing +
-  routing, §3 invariant gate. Next: append-only ledger, then Phase 1.
+- **Status:** Phase 0 (passthrough proxy) essentially complete: aggregation +
+  namespacing + routing, §3 invariant gate, append-only ledger. Next: Phase 1
+  (taint/provenance, tiered policy engine, R1–R3, consent) — or §4 metadata pinning.
 - **The chokepoint** is `BulkheadProxy::call_tool` in `src/proxy.rs`: every
-  `tools/call` runs `invariants.evaluate()` before routing. Ledger and Phase 1
-  rules hang off this exact point (this is where `assess()` + ledger land next).
+  `tools/call` runs `invariants.assess()` → `ledger.record_call()` → route. Phase 1
+  rules slot in at this exact point. `evaluate()` is the client-clean projection
+  of `assess()`; the operator-only matched path stays on `Assessment`.
 - **Modules:** `proxy` (MCP server + chokepoint), `upstream` (client connections,
-  namespacing, routing, `Registry`), `invariant` (§3 gate, `Decision`), `config`
+  namespacing, routing, `Registry`), `invariant` (§3 gate, `Decision`/`Assessment`,
+  `bulkhead_home()`), `ledger` (append-only JSONL under home), `config`
   (`bulkhead.toml`), `bin/mock_upstream` (network-free test fixture).
 - **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
   `upstream.rs` rather than re-deriving; read crate source in the registry cache
