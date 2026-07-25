@@ -15,8 +15,10 @@ path = "src/main.rs"
 name = "bulkhead"
 path = "src/lib.rs"
 
-# Dependencies (rmcp, tokio) are added in chunk 1, pinned to exact versions,
-# once their feature flags are verified against the published crate.
 [dependencies]
+# Pinned exactly. Never write rmcp API calls from memory — verify against the
+# source of this exact version (see CLAUDE.md).
+rmcp = { version = "=2.2.0", features = ["server", "transport-io"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "signal"] }
 
 [dev-dependencies]

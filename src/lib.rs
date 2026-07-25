@@ -4,6 +4,10 @@
 //! network access exists anywhere in the enforcement path. Policy evaluation
 //! is a pure function.
 
+pub mod proxy;
+
+pub use proxy::{BulkheadProxy, serve_stdio};
+
 /// The crate version, sourced from `Cargo.toml` at compile time.
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
