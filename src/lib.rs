@@ -5,6 +5,7 @@
 //! is a pure function.
 
 pub mod config;
+pub mod decision;
 pub mod invariant;
 pub mod ledger;
 pub mod paths;
@@ -12,7 +13,8 @@ pub mod proxy;
 pub mod upstream;
 
 pub use config::Config;
-pub use invariant::{Assessment, Decision, Invariants};
+pub use decision::{Assessment, Decision};
+pub use invariant::Invariants;
 pub use ledger::Ledger;
 pub use proxy::{serve_stdio, BulkheadProxy, ServeError};
 

@@ -16,12 +16,12 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
   rules slot in at this exact point. `evaluate()` is the client-clean projection
   of `assess()`; the operator-only matched path stays on `Assessment`.
 - **Modules & dependency direction** (leaves at the bottom; no lateral imports):
-  `paths` (path resolution + `bulkhead_home()`) and `config` (`bulkhead.toml`) are
-  leaves; `invariant` (§3 gate, `Decision`/`Assessment`) and `ledger` (append-only
-  JSONL) depend only on those; `upstream` (`Registry`, routing, `CallError`) depends
-  on `config`; `proxy` composes everything and owns the chokepoint. `invariant`,
-  `ledger`, and `upstream` must not import each other. `bin/mock_upstream` and
-  `examples/demo_session` are the network-free fixtures.
+  `paths` (path resolution + `bulkhead_home()`), `config` (`bulkhead.toml`), and
+  `decision` (`Decision`/`Assessment` vocabulary) are leaves; `invariant` (§3 gate)
+  and `ledger` (append-only JSONL) depend only on leaves; `upstream` (`Registry`,
+  routing, `CallError`) depends on `config`; `proxy` composes everything and owns
+  the chokepoint. `invariant`, `ledger`, and `upstream` must not import each other.
+  `bin/mock_upstream` and `examples/demo_session` are the network-free fixtures.
 - **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
   `upstream.rs` rather than re-deriving; read crate source in the registry cache
   before using an unverified API.

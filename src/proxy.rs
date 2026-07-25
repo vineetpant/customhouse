@@ -21,7 +21,8 @@ use rmcp::{
 use std::path::Path;
 
 use crate::config::Config;
-use crate::invariant::{Decision, Invariants};
+use crate::decision::Decision;
+use crate::invariant::Invariants;
 use crate::ledger::Ledger;
 use crate::upstream::{CallError, Registry, UpstreamError};
 
@@ -133,6 +134,9 @@ impl ServerHandler for BulkheadProxy {
 pub enum ServeError {
     #[error(transparent)]
     Connect(#[from] UpstreamError),
+    // Boxed because rmcp's serve error type is not exported on any public path,
+    // so it cannot be named to hold it typed. This is a `#[source]` field, not a
+    // return signature — the guideline exception for unnameable foreign errors.
     #[error("failed to start MCP server: {0}")]
     Server(#[source] Box<dyn std::error::Error + Send + Sync>),
     #[error("server task failed: {0}")]

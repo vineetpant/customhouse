@@ -23,7 +23,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rmcp::model::CallToolRequestParams;
 use serde::Serialize;
 
-use crate::invariant::{Assessment, Decision};
+use crate::decision::{Assessment, Decision};
 use crate::paths::bulkhead_home;
 
 const LEDGER_FILE: &str = "ledger.jsonl";
