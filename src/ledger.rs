@@ -23,7 +23,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rmcp::model::CallToolRequestParams;
 use serde::Serialize;
 
-use crate::config::NAMESPACE_SEP;
 use crate::invariant::{Assessment, Decision};
 use crate::paths::bulkhead_home;
 
@@ -83,28 +82,33 @@ impl Ledger {
         &self.path
     }
 
-    /// Record one mediated call and its assessment. The deny detail is the
-    /// matched protected path — operator-only, and safe here precisely because
-    /// the ledger is unreadable through the mediated surface (I-5).
-    pub fn record_call(&self, request: &CallToolRequestParams, assessment: &Assessment) {
+    /// Record one mediated call and its assessment. `server` is the owning
+    /// upstream, supplied structurally by the caller (via `Registry::server_of`)
+    /// rather than re-parsed from the tool name. The deny detail is the matched
+    /// protected path — operator-only, and safe here precisely because the ledger
+    /// is unreadable through the mediated surface (I-5).
+    pub fn record_call(
+        &self,
+        request: &CallToolRequestParams,
+        server: Option<&str>,
+        assessment: &Assessment,
+    ) {
         let (decision, detail) = match &assessment.decision {
-            Decision::Allow => ("allow", None),
+            Decision::Allow => (LedgerDecision::Allow, None),
             Decision::Deny { .. } => (
-                "deny",
+                LedgerDecision::Deny,
                 assessment
                     .matched_path
                     .as_ref()
                     .map(|p| p.display().to_string()),
             ),
         };
-        let tool = request.name.to_string();
-        let server = tool.split_once(NAMESPACE_SEP).map(|(s, _)| s.to_string());
 
         let entry = LedgerEntry {
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             ts_ms: now_ms(),
-            tool,
-            server,
+            tool: request.name.to_string(),
+            server: server.map(str::to_string),
             decision,
             detail,
         };
@@ -142,9 +146,17 @@ struct LedgerEntry {
     tool: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     server: Option<String>,
-    decision: &'static str,
+    decision: LedgerDecision,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+}
+
+/// The decision as recorded in the ledger. Serializes to `"allow"` / `"deny"`.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum LedgerDecision {
+    Allow,
+    Deny,
 }
 
 fn now_ms() -> u64 {
@@ -200,9 +212,10 @@ mod tests {
     fn records_allow_and_deny_with_expected_fields() {
         let home = tempfile::tempdir().unwrap();
         let ledger = Ledger::open_in(home.path());
-        ledger.record_call(&call("web__fetch", None), &allow());
+        ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
         ledger.record_call(
             &call("fs__write", Some("/etc/x")),
+            Some("fs"),
             &deny("/home/u/.bulkhead/secret"),
         );
 
@@ -229,11 +242,11 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         {
             let ledger = Ledger::open_in(home.path());
-            ledger.record_call(&call("web__fetch", None), &allow());
+            ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
         }
         {
             let ledger = Ledger::open_in(home.path());
-            ledger.record_call(&call("web__fetch", None), &allow());
+            ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
         }
         assert_eq!(read_entries(&home.path().join(LEDGER_FILE)).len(), 2);
     }
@@ -264,6 +277,6 @@ mod tests {
         fs::write(&not_a_dir, b"x").unwrap();
 
         let ledger = Ledger::open_in(&not_a_dir);
-        ledger.record_call(&call("web__fetch", None), &allow()); // must not panic
+        ledger.record_call(&call("web__fetch", None), Some("web"), &allow()); // must not panic
     }
 }

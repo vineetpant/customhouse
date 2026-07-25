@@ -109,7 +109,8 @@ impl ServerHandler for BulkheadProxy {
         // the operator-only matched path from the assessment; the client sees
         // only the generic Decision reason. Phase 1 rules slot in right here.
         let assessment = self.invariants.assess(&request);
-        self.ledger.record_call(&request, &assessment);
+        let server = self.registry.server_of(&tool);
+        self.ledger.record_call(&request, server, &assessment);
         if let Decision::Deny { reason } = assessment.decision {
             eprintln!("bulkhead: self-protection denied tool `{tool}`");
             return Err(McpError::invalid_params(reason, None));
