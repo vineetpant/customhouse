@@ -271,4 +271,80 @@ mod tests {
         let request = CallToolRequestParams::new("mock__echo");
         assert_eq!(invariants.evaluate(&request), Decision::Allow);
     }
+
+    // The cases below lock behaviour that the gate already has but nothing
+    // asserted. They exist to make a silent regression impossible: without them,
+    // deleting the argument recursion or the canonicalization of odd path shapes
+    // leaves the suite green while protected paths sail through.
+
+    #[test]
+    fn denies_a_path_buried_in_a_nested_argument() {
+        // Arguments are not always a flat `{"path": "..."}`. A protected path
+        // inside an array inside an object must be found — if the recursion in
+        // `collect_path_candidates` is ever removed, this is what fails.
+        let home = tempfile::tempdir().unwrap();
+        let invariants = Invariants::from_roots(vec![home.path().to_path_buf()]);
+        let target = path_str(home.path().join("ledger.jsonl"));
+
+        let mut arguments = serde_json::Map::new();
+        arguments.insert(
+            "options".into(),
+            serde_json::json!({ "inputs": { "files": [target] } }),
+        );
+        let request = CallToolRequestParams::new("fs__read").with_arguments(arguments);
+
+        assert!(
+            is_deny(invariants.evaluate(&request)),
+            "a protected path nested in arrays/objects must still be denied"
+        );
+    }
+
+    #[test]
+    fn denies_redundant_separator_and_dot_segment_forms() {
+        // Cosmetic path noise must not change the verdict: these all resolve to
+        // the same protected target.
+        let home = tempfile::tempdir().unwrap();
+        let invariants = Invariants::from_roots(vec![home.path().to_path_buf()]);
+        let home_str = path_str(home.path().to_path_buf());
+
+        for target in [
+            format!("{home_str}//ledger.jsonl"),  // doubled separator
+            format!("{home_str}/./ledger.jsonl"), // current-dir segment
+            format!("{home_str}/"),               // trailing slash on the root
+        ] {
+            assert!(
+                is_deny(invariants.evaluate(&call_with_path(&target))),
+                "must deny `{target}`"
+            );
+        }
+    }
+
+    #[test]
+    fn denies_symlink_whose_leaf_points_into_home() {
+        // The mid-path symlink case is covered above; this is the leaf itself
+        // being the link, which canonicalization must also follow.
+        let home = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let protected_file = home.path().join("ledger.jsonl");
+        fs::write(&protected_file, b"ledger").unwrap();
+
+        let link = outside.path().join("innocent-name");
+        symlink(&protected_file, &link).unwrap();
+
+        let invariants = Invariants::from_roots(vec![home.path().to_path_buf()]);
+        assert!(is_deny(
+            invariants.evaluate(&call_with_path(&path_str(link)))
+        ));
+    }
+
+    #[test]
+    fn denies_not_yet_existing_nested_directories_in_home() {
+        // Neither the intermediate directories nor the leaf exist yet. Resolution
+        // must still place the target inside the protected root — this is the
+        // create-a-whole-subtree variant of the write case.
+        let home = tempfile::tempdir().unwrap();
+        let invariants = Invariants::from_roots(vec![home.path().to_path_buf()]);
+        let target = path_str(home.path().join("a").join("b").join("c.txt"));
+        assert!(is_deny(invariants.evaluate(&call_with_path(&target))));
+    }
 }
