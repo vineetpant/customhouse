@@ -27,6 +27,12 @@
 //! is only knowable from the server's schema. The shared [`crate::decision::Decision`]
 //! is Allow/Deny only for now; `Escalate` arrives with the tiered policy engine
 //! in Phase 1.
+//!
+//! Also not caught, because the check is path-based: **inode aliases**. Resolution
+//! follows symlinks, but a hardlink to a protected file — or a bind mount of the
+//! Bulkhead home — yields a path outside every protected root. Making such an
+//! alias *through a mediated call* is itself denied, so exploiting this needs
+//! out-of-band filesystem access: the malicious-host case §3 puts out of scope.
 
 use std::path::{Path, PathBuf};
 

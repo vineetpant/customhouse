@@ -11,7 +11,9 @@ upstream MCP servers, acting as a deterministic reference monitor. Its hard
 constraint: **no LLM/model call and no network access exists anywhere in the
 enforcement path — policy evaluation is a pure function.**
 
-See [`DESIGN-v2.md`](./DESIGN-v2.md) for the full design and threat model.
+See [`DESIGN-v2.md`](./DESIGN-v2.md) for the full design and threat model, and
+[`SECURITY.md`](./SECURITY.md) for what v0.1.0 does and does not defend against —
+including the limitations it will not be closing, and why.
 
 ## See it in 30 seconds
 
