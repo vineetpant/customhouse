@@ -11,6 +11,10 @@ use std::path::PathBuf;
 ///
 /// Client-facing by design: `reason` can end up in an MCP error the model reads,
 /// so this type deliberately carries no resolved filesystem path.
+///
+/// Deliberately exhaustive (no `#[non_exhaustive]`): when Phase 1 adds
+/// `Escalate`, the compiler must flag every match site that needs to handle it,
+/// rather than letting a pre-existing wildcard arm silently treat it as allow.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
     Allow,

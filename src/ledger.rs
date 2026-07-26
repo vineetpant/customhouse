@@ -12,6 +12,10 @@
 //! id, timestamp, tool, resolved server, decision, and (on deny) the matched
 //! path as operator detail. Session, taint labels, rule ids, arg shapes/digests,
 //! and latency are Phase 1; they are left out, not stubbed.
+//!
+//! The JSONL entry schema is a contract for offline consumers (Phase 3 footprint
+//! diffing reads these files): evolve it additively — add new optional fields,
+//! never rename or repurpose existing ones.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;

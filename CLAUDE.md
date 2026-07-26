@@ -43,6 +43,9 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 - Work in small, individually testable chunks; **commit each working chunk.**
 - **Write tests alongside code and run them yourself before telling me a chunk is done.**
 - **Never claim something works without running it.**
+- **Reviews are comments, not commits.** A reviewer records findings (e.g. a
+  committed `REVIEW.md`) and stops; the implementer applies them and deletes the
+  file. The reviewer does not push fixes directly.
 
 ## Code conventions
 
@@ -54,11 +57,14 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 ## Rust design guidelines (hold the line — the codebase is structured this way)
 
 - **Module dependency direction is acyclic and points at leaves.** Leaves
-  (`paths`, `config`) import nothing from the crate; policy/record modules
-  (`invariant`, `ledger`) depend only on leaves; `proxy` is the composition root.
-  `invariant`/`ledger`/`upstream` must never import each other — if two need a
-  thing, it belongs in a leaf they both depend on (that is why `bulkhead_home`
-  lives in `paths`, not `invariant`).
+  (`paths`, `config`, `decision`) import nothing from the crate; policy/record
+  modules (`invariant`, `ledger`) depend only on leaves; `proxy` is the
+  composition root. `invariant`/`ledger`/`upstream` must never import each other
+  in production code — if two need a thing, it belongs in a leaf they both depend
+  on (that is why `bulkhead_home` lives in `paths` and `Decision` in `decision`).
+  Exception: `#[cfg(test)]` may cross laterally when the cross-module property
+  *is* the test — the I-5 drift test in `ledger` imports `Invariants` by design;
+  do not "fix" it.
 - **Typed errors per module; no `Box<dyn Error>` in library code.** Each module
   owns a `thiserror` enum whose variants name the actual failure (build-time vs
   call-time are different types — `UpstreamError` vs `CallError`). Preserve

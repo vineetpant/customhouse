@@ -24,8 +24,9 @@
 //! Does NOT catch (documented, not hidden): bare filenames with no separator,
 //! paths hidden inside encoded/base64 blobs (that is §7.4, Phase 1), exec/shell
 //! string arguments (I3 → Escalate, Phase 1), and any argument whose path-ness
-//! is only knowable from the server's schema. `Decision` here is Allow/Deny only;
-//! `Escalate` arrives with the tiered policy engine in Phase 1.
+//! is only knowable from the server's schema. The shared [`crate::decision::Decision`]
+//! is Allow/Deny only for now; `Escalate` arrives with the tiered policy engine
+//! in Phase 1.
 
 use std::path::{Path, PathBuf};
 
