@@ -1,12 +1,13 @@
 //! Bulkhead binary entry point.
 //!
-//! `bulkhead serve [--config <path>]` runs the aggregating MCP proxy over stdio.
+//! `bulkhead serve [--config <path>]` runs the aggregating MCP proxy over stdio;
+//! `bulkhead repin <server>` accepts an upstream's current tool definitions.
 //! stdout carries the MCP protocol; diagnostics go to stderr.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use bulkhead::Config;
+use bulkhead::{Config, PinStore};
 
 /// Config file consulted when `--config` is not given, if it exists.
 const DEFAULT_CONFIG_PATH: &str = "bulkhead.toml";
@@ -24,9 +25,48 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         None | Some("serve") => run_serve(args.collect()),
+        Some("repin") => run_repin(args.collect()),
         Some(other) => {
             eprintln!("bulkhead: unknown argument `{other}`");
             print_usage();
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// `bulkhead repin <server>` — forget a server's pins so its current tool
+/// definitions are accepted (re-pinned fresh) on the next `serve`. Deliberately
+/// minimal: it edits the pin store on disk and exits, a state change made
+/// outside the mediated surface. No interactive approval protocol.
+fn run_repin(rest: Vec<String>) -> ExitCode {
+    let server = match rest.as_slice() {
+        [server] => server,
+        [] => {
+            eprintln!("bulkhead: repin requires a server name");
+            print_usage();
+            return ExitCode::FAILURE;
+        }
+        _ => {
+            eprintln!("bulkhead: repin takes exactly one server name");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let mut pins = PinStore::open();
+    if !pins.forget_server(server) {
+        // Not an error: nothing to accept is a perfectly fine outcome.
+        eprintln!("bulkhead: no pins found for server `{server}` (nothing to repin)");
+        return ExitCode::SUCCESS;
+    }
+    match pins.save() {
+        Ok(()) => {
+            eprintln!(
+                "bulkhead: repinned `{server}` — its current definitions will be accepted on next serve"
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("bulkhead: failed to save pin store: {e}");
             ExitCode::FAILURE
         }
     }
@@ -89,7 +129,9 @@ fn resolve_config(rest: Vec<String>) -> Result<(Config, Option<PathBuf>), String
 }
 
 fn print_usage() {
-    eprintln!("Usage: bulkhead [serve [--config <path>] | --version | --help]");
-    eprintln!("  serve   Run the aggregating MCP proxy over stdio (default)");
-    eprintln!("  --config <path>   Upstream servers to aggregate (default: bulkhead.toml)");
+    eprintln!("Usage: bulkhead <command> [options]");
+    eprintln!("  serve [--config <path>]   Run the aggregating MCP proxy over stdio (default;");
+    eprintln!("                            config default: bulkhead.toml)");
+    eprintln!("  repin <server>            Accept an upstream's current tool definitions");
+    eprintln!("  --version | --help");
 }
