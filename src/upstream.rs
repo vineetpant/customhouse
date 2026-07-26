@@ -16,7 +16,7 @@ use rmcp::{
 };
 
 use crate::config::{UpstreamConfig, NAMESPACE_SEP};
-use crate::pin::{PinOutcome, PinStore, ToolCheck};
+use crate::pin::{CheckedTool, PinOutcome, PinStore};
 
 /// The client-namespaced identifier for a tool, e.g. `web` + `fetch` →
 /// `web__fetch`.
@@ -116,8 +116,8 @@ impl Registry {
                     source,
                 })?;
             let version = upstream.declared_version();
-            let checks = pins.check_server(&config.name, version.as_deref(), &tools);
-            events.extend(registry.apply_server_checks(&config.name, index, tools, checks)?);
+            let checked = pins.check_server(&config.name, version.as_deref(), tools);
+            events.extend(registry.apply_server_checks(&config.name, index, checked)?);
             registry.upstreams.push(upstream);
         }
         if let Err(e) = pins.save() {
@@ -133,19 +133,18 @@ impl Registry {
     /// collect a [`MetadataEvent`] for each pin and each withhold. Withheld tools
     /// are never inserted — Bulkhead does not serve a pinned definition while the
     /// upstream would execute the new one.
+    ///
+    /// Each tool arrives already carrying its own verdict, so there is no way to
+    /// gate one tool with another's outcome.
     fn apply_server_checks(
         &mut self,
         server: &str,
         index: usize,
-        tools: Vec<Tool>,
-        checks: Vec<ToolCheck>,
+        checked: Vec<CheckedTool>,
     ) -> Result<Vec<MetadataEvent>, UpstreamError> {
         let mut events = Vec::new();
-        for (tool, check) in tools.into_iter().zip(checks) {
-            let ToolCheck {
-                tool: tool_name,
-                outcome,
-            } = check;
+        for CheckedTool { tool, outcome } in checked {
+            let tool_name = tool.name.to_string();
             if outcome.is_served() {
                 // First sight is worth recording; an unchanged tool is not.
                 if matches!(outcome, PinOutcome::FirstSight) {
@@ -278,30 +277,24 @@ impl MetadataEvent {
         namespaced_tool_name(&self.server, &self.tool)
     }
 
-    /// Print a one-line operator summary to stderr.
-    pub fn report(&self) {
+    /// A one-line operator summary, or `None` when there is nothing to say (an
+    /// unchanged tool). Pure: the caller decides where it is written.
+    pub fn summary(&self) -> Option<String> {
+        let tool = self.qualified_tool();
         match &self.outcome {
-            PinOutcome::FirstSight => {
-                eprintln!("bulkhead: pinned {}", self.qualified_tool());
-            }
-            PinOutcome::Mutated { .. } => {
-                eprintln!(
-                    "bulkhead: WITHHELD {} — definition changed since pinned; run `bulkhead repin {}` to accept",
-                    self.qualified_tool(),
-                    self.server,
-                );
-            }
+            PinOutcome::FirstSight => Some(format!("pinned {tool}")),
+            PinOutcome::Mutated { .. } => Some(format!(
+                "WITHHELD {tool} — definition changed since pinned; run `bulkhead repin {}` to accept",
+                self.server,
+            )),
             PinOutcome::VersionChanged {
                 pinned_version,
                 current_version,
-            } => {
-                eprintln!(
-                    "bulkhead: WITHHELD {} — upstream version changed {pinned_version:?} -> {current_version:?}; run `bulkhead repin {}`",
-                    self.qualified_tool(),
-                    self.server,
-                );
-            }
-            PinOutcome::Unchanged => {}
+            } => Some(format!(
+                "WITHHELD {tool} — upstream version changed {pinned_version:?} -> {current_version:?}; run `bulkhead repin {}`",
+                self.server,
+            )),
+            PinOutcome::Unchanged => None,
         }
     }
 }
@@ -394,9 +387,9 @@ mod tests {
         assert!(matches!(error, CallError::UnknownTool { tool } if tool == "web__fetch"));
     }
 
-    fn check(name: &str, outcome: PinOutcome) -> ToolCheck {
-        ToolCheck {
-            tool: name.to_string(),
+    fn check(name: &str, outcome: PinOutcome) -> CheckedTool {
+        CheckedTool {
+            tool: tool(name),
             outcome,
         }
     }
@@ -404,8 +397,7 @@ mod tests {
     #[test]
     fn withheld_tools_are_not_served_but_are_reported() {
         let mut registry = Registry::empty();
-        let tools = vec![tool("fetch"), tool("send")];
-        let checks = vec![
+        let checked = vec![
             check("fetch", PinOutcome::FirstSight),
             check(
                 "send",
@@ -415,9 +407,7 @@ mod tests {
                 },
             ),
         ];
-        let events = registry
-            .apply_server_checks("web", 0, tools, checks)
-            .unwrap();
+        let events = registry.apply_server_checks("web", 0, checked).unwrap();
 
         // Only the served (first-sight) tool reaches the merged set; the mutated
         // one is withheld — never served under its pinned definition.
@@ -436,14 +426,30 @@ mod tests {
     fn unchanged_tools_are_served_without_an_event() {
         let mut registry = Registry::empty();
         let events = registry
-            .apply_server_checks(
-                "web",
-                0,
-                vec![tool("fetch")],
-                vec![check("fetch", PinOutcome::Unchanged)],
-            )
+            .apply_server_checks("web", 0, vec![check("fetch", PinOutcome::Unchanged)])
             .unwrap();
         assert_eq!(registry.tools().len(), 1);
         assert!(events.is_empty());
+    }
+
+    #[test]
+    fn summary_is_pure_and_silent_for_unchanged() {
+        let withheld = MetadataEvent::new(
+            "web",
+            "send".to_string(),
+            PinOutcome::Mutated {
+                pinned: "old".into(),
+                current: "new".into(),
+            },
+        );
+        let summary = withheld.summary().expect("a withhold has a summary");
+        assert!(summary.contains("WITHHELD web__send"));
+        assert!(summary.contains("bulkhead repin web"));
+
+        let unchanged = MetadataEvent::new("web", "fetch".to_string(), PinOutcome::Unchanged);
+        assert!(
+            unchanged.summary().is_none(),
+            "nothing to say for unchanged"
+        );
     }
 }

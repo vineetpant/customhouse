@@ -29,7 +29,7 @@ const PIN_FILE: &str = "pins.json";
 /// The canonical, stable serialization of a tool's pinnable definition — its
 /// name, description, and input schema. Object keys are sorted (serde_json's
 /// `Map` is a `BTreeMap`), so the form is independent of upstream key order.
-pub fn canonical_definition(tool: &Tool) -> String {
+fn canonical_definition(tool: &Tool) -> String {
     #[derive(Serialize)]
     struct Definition<'a> {
         name: &'a str,
@@ -70,10 +70,16 @@ impl PinOutcome {
     }
 }
 
-/// The outcome for one named tool.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ToolCheck {
-    pub tool: String,
+/// A tool paired with its pin verdict.
+///
+/// The tool and its outcome travel together as a single value so a caller
+/// cannot pair the wrong verdict with the wrong tool. That pairing is what the
+/// withhold decision rests on: gate a tool with a neighbour's verdict and a
+/// mutated definition gets served. Keeping them in one struct makes the desync
+/// unrepresentable rather than merely unlikely.
+#[derive(Debug, Clone)]
+pub struct CheckedTool {
+    pub tool: Tool,
     pub outcome: PinOutcome,
 }
 
@@ -154,7 +160,10 @@ impl PinStore {
 
     /// Check a server's freshly fetched tools against the store, pinning any
     /// first-sight tools in memory (call [`save`](Self::save) to persist).
-    /// Returns an outcome per tool, in the given order.
+    ///
+    /// Takes ownership of the tools and hands each one back inside a
+    /// [`CheckedTool`] alongside its verdict, so the caller cannot separate a
+    /// tool from the outcome that decides whether it may be served.
     ///
     /// A changed declared version invalidates the whole server: every tool comes
     /// back `VersionChanged` and the store is left untouched, so the withhold
@@ -163,19 +172,20 @@ impl PinStore {
         &mut self,
         server: &str,
         version: Option<&str>,
-        tools: &[Tool],
-    ) -> Vec<ToolCheck> {
+        tools: Vec<Tool>,
+    ) -> Vec<CheckedTool> {
         let Some(existing) = self.data.servers.get(server) else {
             return self.pin_new_server(server, version, tools);
         };
 
         if existing.version.as_deref() != version {
+            let pinned_version = existing.version.clone();
             return tools
-                .iter()
-                .map(|tool| ToolCheck {
-                    tool: tool.name.to_string(),
+                .into_iter()
+                .map(|tool| CheckedTool {
+                    tool,
                     outcome: PinOutcome::VersionChanged {
-                        pinned_version: existing.version.clone(),
+                        pinned_version: pinned_version.clone(),
                         current_version: version.map(String::from),
                     },
                 })
@@ -185,8 +195,13 @@ impl PinStore {
         let mut results = Vec::with_capacity(tools.len());
         for tool in tools {
             let name = tool.name.to_string();
-            let current = canonical_definition(tool);
-            let pinned = self.data.servers[server].tools.get(&name).cloned();
+            let current = canonical_definition(&tool);
+            let pinned = self
+                .data
+                .servers
+                .get(server)
+                .and_then(|pins| pins.tools.get(&name))
+                .cloned();
             let outcome = match pinned {
                 None => {
                     self.insert_pin(server, &name, &current);
@@ -195,10 +210,7 @@ impl PinStore {
                 Some(pinned) if pinned == current => PinOutcome::Unchanged,
                 Some(pinned) => PinOutcome::Mutated { pinned, current },
             };
-            results.push(ToolCheck {
-                tool: name,
-                outcome,
-            });
+            results.push(CheckedTool { tool, outcome });
         }
         results
     }
@@ -207,20 +219,19 @@ impl PinStore {
         &mut self,
         server: &str,
         version: Option<&str>,
-        tools: &[Tool],
-    ) -> Vec<ToolCheck> {
+        tools: Vec<Tool>,
+    ) -> Vec<CheckedTool> {
         let mut server_pins = ServerPins {
             version: version.map(String::from),
             tools: BTreeMap::new(),
         };
         let mut results = Vec::with_capacity(tools.len());
         for tool in tools {
-            let name = tool.name.to_string();
             server_pins
                 .tools
-                .insert(name.clone(), canonical_definition(tool));
-            results.push(ToolCheck {
-                tool: name,
+                .insert(tool.name.to_string(), canonical_definition(&tool));
+            results.push(CheckedTool {
+                tool,
                 outcome: PinOutcome::FirstSight,
             });
         }
@@ -257,7 +268,7 @@ mod tests {
         )
     }
 
-    fn outcomes(checks: &[ToolCheck]) -> Vec<&PinOutcome> {
+    fn outcomes(checks: &[CheckedTool]) -> Vec<&PinOutcome> {
         checks.iter().map(|c| &c.outcome).collect()
     }
 
@@ -286,12 +297,12 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         {
             let mut store = PinStore::open_in(home.path());
-            let checks = store.check_server("mock", Some("1"), &[tool("echo", "Echo")]);
+            let checks = store.check_server("mock", Some("1"), vec![tool("echo", "Echo")]);
             assert_eq!(outcomes(&checks), [&PinOutcome::FirstSight]);
             store.save().unwrap();
         }
         let mut store = PinStore::open_in(home.path());
-        let checks = store.check_server("mock", Some("1"), &[tool("echo", "Echo")]);
+        let checks = store.check_server("mock", Some("1"), vec![tool("echo", "Echo")]);
         assert_eq!(outcomes(&checks), [&PinOutcome::Unchanged]);
     }
 
@@ -299,8 +310,8 @@ mod tests {
     fn detects_a_mutated_definition() {
         let home = tempfile::tempdir().unwrap();
         let mut store = PinStore::open_in(home.path());
-        store.check_server("mock", Some("1"), &[tool("echo", "Echo")]);
-        let checks = store.check_server("mock", Some("1"), &[tool("echo", "Echo, but evil")]);
+        store.check_server("mock", Some("1"), vec![tool("echo", "Echo")]);
+        let checks = store.check_server("mock", Some("1"), vec![tool("echo", "Echo, but evil")]);
         assert!(matches!(checks[0].outcome, PinOutcome::Mutated { .. }));
         assert!(!checks[0].outcome.is_served());
     }
@@ -309,8 +320,8 @@ mod tests {
     fn a_version_change_withholds_the_whole_server() {
         let home = tempfile::tempdir().unwrap();
         let mut store = PinStore::open_in(home.path());
-        store.check_server("mock", Some("1"), &[tool("echo", "Echo")]);
-        let checks = store.check_server("mock", Some("2"), &[tool("echo", "Echo")]);
+        store.check_server("mock", Some("1"), vec![tool("echo", "Echo")]);
+        let checks = store.check_server("mock", Some("2"), vec![tool("echo", "Echo")]);
         assert!(matches!(
             checks[0].outcome,
             PinOutcome::VersionChanged { .. }
@@ -319,14 +330,52 @@ mod tests {
     }
 
     #[test]
+    fn each_tool_is_returned_with_its_own_verdict() {
+        // The pairing is the whole basis of the withhold decision: gate a tool
+        // with a neighbour's verdict and a mutated definition gets served. This
+        // asserts every tool carries the outcome that belongs to it.
+        let home = tempfile::tempdir().unwrap();
+        let mut store = PinStore::open_in(home.path());
+        store.check_server(
+            "mock",
+            Some("1"),
+            vec![tool("echo", "Echo"), tool("ping", "Ping")],
+        );
+
+        // `echo` mutates, `ping` does not, and a third tool is new.
+        let checked = store.check_server(
+            "mock",
+            Some("1"),
+            vec![
+                tool("echo", "Echo, but evil"),
+                tool("ping", "Ping"),
+                tool("stat", "Stat"),
+            ],
+        );
+
+        let by_name: Vec<(&str, bool)> = checked
+            .iter()
+            .map(|c| (c.tool.name.as_ref(), c.outcome.is_served()))
+            .collect();
+        assert_eq!(
+            by_name,
+            [("echo", false), ("ping", true), ("stat", true)],
+            "the mutated tool, and only it, must be unservable"
+        );
+        assert!(matches!(checked[0].outcome, PinOutcome::Mutated { .. }));
+        assert_eq!(checked[1].outcome, PinOutcome::Unchanged);
+        assert_eq!(checked[2].outcome, PinOutcome::FirstSight);
+    }
+
+    #[test]
     fn a_new_tool_on_a_known_server_is_first_sight() {
         let home = tempfile::tempdir().unwrap();
         let mut store = PinStore::open_in(home.path());
-        store.check_server("mock", Some("1"), &[tool("echo", "Echo")]);
+        store.check_server("mock", Some("1"), vec![tool("echo", "Echo")]);
         let checks = store.check_server(
             "mock",
             Some("1"),
-            &[tool("echo", "Echo"), tool("ping", "Ping")],
+            vec![tool("echo", "Echo"), tool("ping", "Ping")],
         );
         assert_eq!(
             outcomes(&checks),
@@ -338,10 +387,10 @@ mod tests {
     fn forget_server_re_pins_on_next_check() {
         let home = tempfile::tempdir().unwrap();
         let mut store = PinStore::open_in(home.path());
-        store.check_server("mock", Some("1"), &[tool("echo", "Echo")]);
+        store.check_server("mock", Some("1"), vec![tool("echo", "Echo")]);
         assert!(store.forget_server("mock"));
         // A mutated definition is now first-sight again — the operator accepted it.
-        let checks = store.check_server("mock", Some("1"), &[tool("echo", "Echo, changed")]);
+        let checks = store.check_server("mock", Some("1"), vec![tool("echo", "Echo, changed")]);
         assert_eq!(outcomes(&checks), [&PinOutcome::FirstSight]);
     }
 

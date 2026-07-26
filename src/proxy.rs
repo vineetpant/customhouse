@@ -1,11 +1,18 @@
-//! The aggregating MCP proxy.
+//! The aggregating MCP proxy — the composition root and the enforcement point.
 //!
 //! `BulkheadProxy` presents Bulkhead to the client as a single MCP server that
 //! exposes the merged, namespaced tools of its upstream servers and routes each
-//! call back to the owning upstream. Policy is not yet enforced here — the proxy
-//! passes calls through — but this is the single chokepoint every future
-//! decision runs at.
+//! call back to the owning upstream. Enforcement happens in two places:
+//!
+//! - at connect, metadata pinning withholds any tool whose definition changed
+//!   since it was pinned (§4), so it is never exposed in the first place;
+//! - at call time, the §3 self-protection invariants are evaluated before the
+//!   call is forwarded to any upstream.
+//!
+//! That call-time step is the single chokepoint every future policy decision
+//! runs at; the Phase 1 taint and tiered-policy rules slot in there.
 
+use std::path::Path;
 use std::sync::Arc;
 
 use rmcp::{
@@ -17,8 +24,6 @@ use rmcp::{
     transport::stdio,
     ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
-
-use std::path::Path;
 
 use crate::config::Config;
 use crate::decision::Decision;
@@ -67,7 +72,9 @@ impl BulkheadProxy {
         // Pins and withholds go to stderr for the operator and to the ledger as
         // the audit record.
         for event in &events {
-            event.report();
+            if let Some(summary) = event.summary() {
+                eprintln!("bulkhead: {summary}");
+            }
             ledger.record_metadata(&event.server, &event.qualified_tool(), &event.outcome);
         }
         Ok(Self {
