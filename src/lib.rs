@@ -9,6 +9,7 @@ pub mod decision;
 pub mod invariant;
 pub mod ledger;
 pub mod paths;
+pub mod pin;
 pub mod proxy;
 pub mod upstream;
 
@@ -16,6 +17,7 @@ pub use config::Config;
 pub use decision::{Assessment, Decision};
 pub use invariant::Invariants;
 pub use ledger::Ledger;
+pub use pin::PinStore;
 pub use proxy::{serve_stdio, BulkheadProxy, ServeError};
 
 /// The crate version, sourced from `Cargo.toml` at compile time.
