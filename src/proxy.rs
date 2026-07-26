@@ -63,15 +63,17 @@ impl BulkheadProxy {
     ) -> Result<Self, UpstreamError> {
         let mut pins = PinStore::open();
         let (registry, events) = Registry::connect(&config.upstreams, &mut pins).await?;
-        // Operator visibility for pins and withholds. Ledger recording of these
-        // events lands in the next step.
+        let ledger = Ledger::open();
+        // Pins and withholds go to stderr for the operator and to the ledger as
+        // the audit record.
         for event in &events {
             event.report();
+            ledger.record_metadata(&event.server, &event.qualified_tool(), &event.outcome);
         }
         Ok(Self {
             registry: Arc::new(registry),
             invariants: Arc::new(Invariants::resolve(config_path)),
-            ledger: Arc::new(Ledger::open()),
+            ledger: Arc::new(ledger),
         })
     }
 

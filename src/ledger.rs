@@ -25,10 +25,11 @@ use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use rmcp::model::CallToolRequestParams;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::decision::{Assessment, Decision};
 use crate::paths::bulkhead_home;
+use crate::pin::PinOutcome;
 
 const LEDGER_FILE: &str = "ledger.jsonl";
 
@@ -108,7 +109,8 @@ impl Ledger {
             ),
         };
 
-        let entry = LedgerEntry {
+        let entry = CallEntry {
+            kind: EntryKind::Call,
             id: self.next_id.fetch_add(1, Ordering::Relaxed),
             ts_ms: now_ms(),
             tool: request.name.to_string(),
@@ -119,7 +121,44 @@ impl Ledger {
         self.write(&entry);
     }
 
-    fn write(&self, entry: &LedgerEntry) {
+    /// Record a metadata-pinning event: a tool pinned at first sight, or a tool
+    /// withheld because its definition or its server's version changed. Like call
+    /// records this is operator-only, so it may carry the untrusted before/after
+    /// definition diff — the ledger is unreadable via the mediated surface (I-5).
+    /// Unchanged tools produce no record.
+    pub fn record_metadata(&self, server: &str, tool: &str, outcome: &PinOutcome) {
+        let (event, reason, detail) = match outcome {
+            PinOutcome::FirstSight => (MetadataOutcome::Pinned, None, None),
+            PinOutcome::Unchanged => return,
+            PinOutcome::Mutated { pinned, current } => (
+                MetadataOutcome::Withheld,
+                Some("definition_changed"),
+                Some(format!("pinned={pinned} current={current}")),
+            ),
+            PinOutcome::VersionChanged {
+                pinned_version,
+                current_version,
+            } => (
+                MetadataOutcome::Withheld,
+                Some("version_changed"),
+                Some(format!("{pinned_version:?} -> {current_version:?}")),
+            ),
+        };
+
+        let entry = MetadataEntry {
+            kind: EntryKind::Metadata,
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            ts_ms: now_ms(),
+            server: server.to_string(),
+            tool: tool.to_string(),
+            event,
+            reason,
+            detail,
+        };
+        self.write(&entry);
+    }
+
+    fn write(&self, entry: &impl Serialize) {
         // Phase 0 posture: a logging failure must NOT block the mediated call.
         // Here the ledger is an observability record, not the enforcement record.
         // This flips to fail-closed in Phase 1, once an approval writes a
@@ -142,8 +181,21 @@ impl Ledger {
     }
 }
 
+/// Which kind of event a ledger line records. Written on every entry; a line
+/// from before this discriminator existed has no `kind` and deserializes as
+/// `Call` (see the round-trip test), so old ledgers stay readable.
+#[derive(Serialize, Deserialize, Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum EntryKind {
+    #[default]
+    Call,
+    Metadata,
+}
+
+/// A mediated `tools/call` and its decision.
 #[derive(Serialize)]
-struct LedgerEntry {
+struct CallEntry {
+    kind: EntryKind,
     /// Monotonic within a single process run only; NOT stable across restarts.
     id: u64,
     ts_ms: u64,
@@ -161,6 +213,29 @@ struct LedgerEntry {
 enum LedgerDecision {
     Allow,
     Deny,
+}
+
+/// A metadata-pinning event: a tool pinned or withheld.
+#[derive(Serialize)]
+struct MetadataEntry {
+    kind: EntryKind,
+    id: u64,
+    ts_ms: u64,
+    server: String,
+    tool: String,
+    event: MetadataOutcome,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<String>,
+}
+
+/// Serializes to `"pinned"` / `"withheld"`.
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum MetadataOutcome {
+    Pinned,
+    Withheld,
 }
 
 fn now_ms() -> u64 {
@@ -226,6 +301,7 @@ mod tests {
         let entries = read_entries(ledger.path());
         assert_eq!(entries.len(), 2);
 
+        assert_eq!(entries[0]["kind"], "call");
         assert_eq!(entries[0]["tool"], "web__fetch");
         assert_eq!(entries[0]["server"], "web");
         assert_eq!(entries[0]["decision"], "allow");
@@ -282,5 +358,52 @@ mod tests {
 
         let ledger = Ledger::open_in(&not_a_dir);
         ledger.record_call(&call("web__fetch", None), Some("web"), &allow()); // must not panic
+    }
+
+    #[test]
+    fn records_pin_and_withhold_metadata_events() {
+        let home = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open_in(home.path());
+        ledger.record_metadata("mock", "mock__echo", &PinOutcome::FirstSight);
+        ledger.record_metadata(
+            "mock",
+            "mock__echo",
+            &PinOutcome::Mutated {
+                pinned: "old".into(),
+                current: "new".into(),
+            },
+        );
+        // Unchanged produces no record.
+        ledger.record_metadata("mock", "mock__echo", &PinOutcome::Unchanged);
+
+        let entries = read_entries(ledger.path());
+        assert_eq!(entries.len(), 2, "unchanged must not be recorded");
+
+        assert_eq!(entries[0]["kind"], "metadata");
+        assert_eq!(entries[0]["tool"], "mock__echo");
+        assert_eq!(entries[0]["event"], "pinned");
+        assert!(entries[0].get("reason").is_none());
+
+        assert_eq!(entries[1]["kind"], "metadata");
+        assert_eq!(entries[1]["event"], "withheld");
+        assert_eq!(entries[1]["reason"], "definition_changed");
+        assert!(entries[1]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("pinned=old"));
+    }
+
+    #[test]
+    fn old_entry_without_kind_parses_as_call() {
+        // A ledger line written before the `kind` discriminator existed has no
+        // `kind` field; a reader must treat it as a call, not fail.
+        #[derive(Deserialize)]
+        struct Header {
+            #[serde(default)]
+            kind: EntryKind,
+        }
+        let old = r#"{"id":0,"ts_ms":1,"tool":"web__fetch","server":"web","decision":"allow"}"#;
+        let header: Header = serde_json::from_str(old).unwrap();
+        assert_eq!(header.kind, EntryKind::Call);
     }
 }
