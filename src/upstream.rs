@@ -16,6 +16,7 @@ use rmcp::{
 };
 
 use crate::config::{UpstreamConfig, NAMESPACE_SEP};
+use crate::pin::{PinOutcome, PinStore, ToolCheck};
 
 /// The client-namespaced identifier for a tool, e.g. `web` + `fetch` →
 /// `web__fetch`.
@@ -44,6 +45,14 @@ impl Upstream {
 
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// The upstream's declared implementation version, from its initialize
+    /// handshake. Pins are bound to it (§4): a version change invalidates them.
+    pub fn declared_version(&self) -> Option<String> {
+        self.service
+            .peer_info()
+            .map(|info| info.server_info.version.clone())
     }
 
     /// Every tool this upstream advertises, under its own (un-namespaced) names.
@@ -83,13 +92,19 @@ impl Registry {
         Self::default()
     }
 
-    /// Connect every configured upstream and build the merged tool set.
+    /// Connect every configured upstream, pin-check its tools, and build the
+    /// merged set from the *served* tools only.
     ///
     /// Fails closed: if any upstream cannot be reached, or two upstreams would
     /// produce the same namespaced tool name, the whole build fails rather than
-    /// serving a partial or ambiguous surface.
-    pub async fn connect(configs: &[UpstreamConfig]) -> Result<Self, UpstreamError> {
+    /// serving a partial or ambiguous surface. Metadata events (pins, withholds)
+    /// are returned for the caller to record; the registry stays ledger-free.
+    pub async fn connect(
+        configs: &[UpstreamConfig],
+        pins: &mut PinStore,
+    ) -> Result<(Self, Vec<MetadataEvent>), UpstreamError> {
         let mut registry = Registry::empty();
+        let mut events = Vec::new();
         for config in configs {
             let upstream = Upstream::connect(config).await?;
             let index = registry.upstreams.len();
@@ -100,12 +115,48 @@ impl Registry {
                     upstream: config.name.clone(),
                     source,
                 })?;
-            for tool in tools {
-                registry.insert_tool(&config.name, index, tool)?;
-            }
+            let version = upstream.declared_version();
+            let checks = pins.check_server(&config.name, version.as_deref(), &tools);
+            events.extend(registry.apply_server_checks(&config.name, index, tools, checks)?);
             registry.upstreams.push(upstream);
         }
-        Ok(registry)
+        if let Err(e) = pins.save() {
+            // Fail-safe, not fail-closed: if pins can't persist, next run re-pins
+            // first-sight (it will not wrongly serve a mutated definition), but
+            // rug-pull detection is degraded until the store is writable again.
+            eprintln!("bulkhead: failed to persist pin store (detection degraded next run): {e}");
+        }
+        Ok((registry, events))
+    }
+
+    /// Insert the served tools (first-sight / unchanged) into the merged set and
+    /// collect a [`MetadataEvent`] for each pin and each withhold. Withheld tools
+    /// are never inserted — Bulkhead does not serve a pinned definition while the
+    /// upstream would execute the new one.
+    fn apply_server_checks(
+        &mut self,
+        server: &str,
+        index: usize,
+        tools: Vec<Tool>,
+        checks: Vec<ToolCheck>,
+    ) -> Result<Vec<MetadataEvent>, UpstreamError> {
+        let mut events = Vec::new();
+        for (tool, check) in tools.into_iter().zip(checks) {
+            let ToolCheck {
+                tool: tool_name,
+                outcome,
+            } = check;
+            if outcome.is_served() {
+                // First sight is worth recording; an unchanged tool is not.
+                if matches!(outcome, PinOutcome::FirstSight) {
+                    events.push(MetadataEvent::new(server, tool_name, outcome));
+                }
+                self.insert_tool(server, index, tool)?;
+            } else {
+                events.push(MetadataEvent::new(server, tool_name, outcome));
+            }
+        }
+        Ok(events)
     }
 
     fn insert_tool(
@@ -201,6 +252,60 @@ impl UpstreamError {
     }
 }
 
+/// A metadata-pinning event from building the registry: a tool pinned at first
+/// sight, or a tool withheld because its definition or its server's version
+/// changed. Returned by [`Registry::connect`] for the caller to record and
+/// surface; carries the pin outcome (including the before/after diff on a
+/// mutation) so the ledger and operator get the full picture.
+#[derive(Debug, Clone)]
+pub struct MetadataEvent {
+    pub server: String,
+    pub tool: String,
+    pub outcome: PinOutcome,
+}
+
+impl MetadataEvent {
+    fn new(server: &str, tool: String, outcome: PinOutcome) -> Self {
+        Self {
+            server: server.to_string(),
+            tool,
+            outcome,
+        }
+    }
+
+    /// The client-facing namespaced name this event concerns.
+    pub fn qualified_tool(&self) -> String {
+        namespaced_tool_name(&self.server, &self.tool)
+    }
+
+    /// Print a one-line operator summary to stderr.
+    pub fn report(&self) {
+        match &self.outcome {
+            PinOutcome::FirstSight => {
+                eprintln!("bulkhead: pinned {}", self.qualified_tool());
+            }
+            PinOutcome::Mutated { .. } => {
+                eprintln!(
+                    "bulkhead: WITHHELD {} — definition changed since pinned; run `bulkhead repin {}` to accept",
+                    self.qualified_tool(),
+                    self.server,
+                );
+            }
+            PinOutcome::VersionChanged {
+                pinned_version,
+                current_version,
+            } => {
+                eprintln!(
+                    "bulkhead: WITHHELD {} — upstream version changed {pinned_version:?} -> {current_version:?}; run `bulkhead repin {}`",
+                    self.qualified_tool(),
+                    self.server,
+                );
+            }
+            PinOutcome::Unchanged => {}
+        }
+    }
+}
+
 /// Failures routing or executing a client tool call. Distinct from build-time
 /// [`UpstreamError`]: these are the outcomes the proxy maps to MCP errors.
 #[derive(Debug, thiserror::Error)]
@@ -287,5 +392,58 @@ mod tests {
         let request = CallToolRequestParams::new("web__fetch");
         let error = registry.route_call(request).await.unwrap_err();
         assert!(matches!(error, CallError::UnknownTool { tool } if tool == "web__fetch"));
+    }
+
+    fn check(name: &str, outcome: PinOutcome) -> ToolCheck {
+        ToolCheck {
+            tool: name.to_string(),
+            outcome,
+        }
+    }
+
+    #[test]
+    fn withheld_tools_are_not_served_but_are_reported() {
+        let mut registry = Registry::empty();
+        let tools = vec![tool("fetch"), tool("send")];
+        let checks = vec![
+            check("fetch", PinOutcome::FirstSight),
+            check(
+                "send",
+                PinOutcome::Mutated {
+                    pinned: "old".into(),
+                    current: "new".into(),
+                },
+            ),
+        ];
+        let events = registry
+            .apply_server_checks("web", 0, tools, checks)
+            .unwrap();
+
+        // Only the served (first-sight) tool reaches the merged set; the mutated
+        // one is withheld — never served under its pinned definition.
+        let names: Vec<_> = registry.tools().iter().map(|t| t.name.as_ref()).collect();
+        assert_eq!(names, ["web__fetch"]);
+        assert_eq!(registry.server_of("web__send"), None);
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].qualified_tool(), "web__fetch");
+        assert!(matches!(events[0].outcome, PinOutcome::FirstSight));
+        assert_eq!(events[1].qualified_tool(), "web__send");
+        assert!(matches!(events[1].outcome, PinOutcome::Mutated { .. }));
+    }
+
+    #[test]
+    fn unchanged_tools_are_served_without_an_event() {
+        let mut registry = Registry::empty();
+        let events = registry
+            .apply_server_checks(
+                "web",
+                0,
+                vec![tool("fetch")],
+                vec![check("fetch", PinOutcome::Unchanged)],
+            )
+            .unwrap();
+        assert_eq!(registry.tools().len(), 1);
+        assert!(events.is_empty());
     }
 }

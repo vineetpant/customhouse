@@ -24,6 +24,7 @@ use crate::config::Config;
 use crate::decision::Decision;
 use crate::invariant::Invariants;
 use crate::ledger::Ledger;
+use crate::pin::PinStore;
 use crate::upstream::{CallError, Registry, UpstreamError};
 
 /// Bulkhead presented to the client as a single aggregating MCP server.
@@ -60,7 +61,13 @@ impl BulkheadProxy {
         config: &Config,
         config_path: Option<&Path>,
     ) -> Result<Self, UpstreamError> {
-        let registry = Registry::connect(&config.upstreams).await?;
+        let mut pins = PinStore::open();
+        let (registry, events) = Registry::connect(&config.upstreams, &mut pins).await?;
+        // Operator visibility for pins and withholds. Ledger recording of these
+        // events lands in the next step.
+        for event in &events {
+            event.report();
+        }
         Ok(Self {
             registry: Arc::new(registry),
             invariants: Arc::new(Invariants::resolve(config_path)),
