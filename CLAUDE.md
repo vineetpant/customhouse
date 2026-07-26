@@ -8,26 +8,30 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 
 ## Implementation map (where things are — not a changelog; git has history)
 
-- **Status:** Phase 0 (passthrough proxy) essentially complete: aggregation +
-  namespacing + routing, §3 invariant gate, append-only ledger. Next: Phase 1
-  (taint/provenance, tiered policy engine, R1–R3, consent) — or §4 metadata pinning.
-- **The chokepoint** is `BulkheadProxy::call_tool` in `src/proxy.rs`: every
-  `tools/call` runs `invariants.assess()` → `ledger.record_call()` → route. Phase 1
-  rules slot in at this exact point. `evaluate()` is the client-clean projection
-  of `assess()`; the operator-only matched path stays on `Assessment`.
+- **Status:** Phase 0 complete (v0.1.0): aggregation + namespacing + routing,
+  §3 invariant gate, append-only ledger, §4 metadata pinning (withhold on
+  mutation, `bulkhead repin <server>`). Next: Phase 1 (taint/provenance, tiered
+  policy engine, R1–R3, consent).
+- **Two enforcement points.** (1) The call chokepoint: `BulkheadProxy::call_tool`
+  runs `invariants.assess()` → `ledger.record_call()` → route; Phase 1 rules slot
+  in here. `evaluate()` is the client-clean projection of `assess()`. (2) Connect
+  time: `Registry::connect` pin-checks each upstream's tools and withholds mutated
+  ones from the served set before anything is exposed.
 - **Modules & dependency direction** (leaves at the bottom; no lateral imports):
   `paths` (path resolution + `bulkhead_home()`), `config` (`bulkhead.toml`), and
-  `decision` (`Decision`/`Assessment` vocabulary) are leaves; `invariant` (§3 gate)
-  and `ledger` (append-only JSONL) depend only on leaves; `upstream` (`Registry`,
-  routing, `CallError`) depends on `config`; `proxy` composes everything and owns
-  the chokepoint. `invariant`, `ledger`, and `upstream` must not import each other.
-  `bin/mock_upstream` and `examples/demo_session` are the network-free fixtures.
+  `decision` (`Decision`/`Assessment` vocabulary), and `pin` (pin store +
+  canonical-definition diffing) are leaves; `invariant` (§3 gate) and `ledger`
+  (append-only JSONL) depend only on leaves; `upstream` (`Registry`, routing,
+  `CallError`, pinning) depends on `config` + `pin`; `proxy` composes everything
+  and owns the chokepoint. `invariant`, `ledger`, and `upstream` must not import
+  each other. `bin/mock_upstream` and `examples/demo_session` are network-free
+  fixtures.
 - **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
   `upstream.rs` rather than re-deriving; read crate source in the registry cache
   before using an unverified API.
-- **Live check / demo:** `./demo/run.sh` runs a hermetic end-to-end session
-  (`examples/demo_session.rs` is a real MCP client) showing an allow, a deny, and
-  the ledger. Use it as the smoke test; it panics if self-protection regresses.
+- **Live checks / demos:** `./demo/run.sh` (allow, self-protection deny, ledger)
+  and `./demo/run_rugpull.sh` (pin → mutate → withhold → repin). Both hermetic and
+  both hard-fail if their property regresses — use them as smoke tests.
 
 ## Architecture rules
 

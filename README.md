@@ -35,19 +35,32 @@ ledger it produced (temp paths abbreviated below):
     the client is told nothing about which path — that detail goes only to the operator ledger.
 
 ── The audit trail ($BULKHEAD_HOME/ledger.jsonl) ──
-{"id":0,"ts_ms":1784985323306,"tool":"mock__echo","server":"mock","decision":"allow"}
-{"id":1,"ts_ms":1784985323307,"tool":"mock__echo","server":"mock","decision":"deny","detail":"$BULKHEAD_HOME/ledger.jsonl"}
+{"kind":"metadata","id":0,"ts_ms":...,"server":"mock","tool":"mock__echo","event":"pinned"}
+{"kind":"call","id":1,"ts_ms":...,"tool":"mock__echo","server":"mock","decision":"allow"}
+{"kind":"call","id":2,"ts_ms":...,"tool":"mock__echo","server":"mock","decision":"deny","detail":"$BULKHEAD_HOME/ledger.jsonl"}
 ```
 
 The denied call is asserted, not narrated: if self-protection regressed, the demo
 panics rather than printing a comforting lie. See [`demo/`](./demo).
 
+### And a rug pull, blocked
+
+```sh
+./demo/run_rugpull.sh
+```
+
+Bulkhead pins a tool's definition, the upstream swaps that description to carry a
+prompt injection, and Bulkhead **withholds** the changed tool — printing the real
+before/after from its ledger — until an operator runs `bulkhead repin <server>`
+to accept it. It never serves the pinned definition while the upstream would
+execute the new one.
+
 ## Status
 
-Pre-release, under active development. **Phase 0** is in place — the aggregating
-proxy with tool namespacing, an append-only ledger, and compiled-in
-self-protection invariants (policy otherwise passthrough). Next: metadata pinning
-(rug-pull blocking) and the Phase 1 taint/policy engine.
+**Phase 0 complete** (v0.1.0): the aggregating proxy with tool namespacing,
+compiled-in self-protection invariants, an append-only audit ledger, and metadata
+pinning (rug-pull blocking with operator re-pin). Policy is otherwise passthrough.
+Next: the Phase 1 taint/provenance model and tiered policy engine.
 
 ## Build
 
