@@ -93,6 +93,9 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 - Conventional Commits, imperative mood.
 - One logical change per commit.
 - Keep the message short: subject line, max ~2 lines total. No long bodies.
+- No `§`/design-section references in commit messages — a git log reader may not
+  have `DESIGN-v2.md` open. Keep `§` refs in code comments, where the doc is right
+  there; commit subjects describe the change in plain terms.
 
 ## Things to never do
 
