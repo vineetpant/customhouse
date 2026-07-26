@@ -12,6 +12,8 @@
 
 **Hard constraint:** no LLM call, no model judgment, and no network access exists anywhere in the enforcement path. Policy evaluation is a pure function. Broken once, the project has reintroduced the vulnerability it claims to fix.
 
+**Second constraint — the one that separates this from the other deterministic tools.** Enforcement never judges what content *says*. No injection-pattern lists, no DLP signature sets, no "this looks malicious" heuristics. Those are an antivirus treadmill: the list must be maintained forever, and it still misses the attack nobody has written a signature for yet. Every decision here rests on *structure* instead — where data came from, where it is going, and whether a definition changed since it was approved. This is a falsifiable bet, not a purity stance: signatures catch today's known payloads that provenance may wave through, and provenance catches novel flows that signatures cannot see. §15 states the bet and who holds the other side of it.
+
 ---
 
 ## 0. Changes from v1 (review findings → sections)
@@ -91,6 +93,8 @@ Consequences: upstream-namespaced tool names (`web__fetch`, `mail__send`), merge
 
 The v1 design was disarmable: a proxied filesystem server could be steered into rewriting Bulkhead's own policy file, after which the *next* call is legitimately allowed. Therefore:
 
+*Confirmed in the wild since v1 was written:* a GitHub Copilot agent was induced to rewrite its own approval settings, disabling human review and reaching unrestricted shell execution. The guardrail lived **inside** the agent, so the agent could remove it. That is precisely the failure this section exists to make structurally impossible — the invariants below are compiled into the binary and are not reachable through the surface being proxied.
+
 **Invariant set, compiled into the binary, evaluated before any policy rule, not expressible or removable in any config:**
 
 - I1. Any mediated operation whose target resolves inside the Bulkhead home directory (config, policy, ledger, fingerprint store, consent socket) → **Deny**. Path resolution happens after canonicalization (symlinks, `..`, homedir expansion) — the check runs on the resolved path, not the argument string.
@@ -113,6 +117,8 @@ Tool descriptions and schemas are attacker-controlled text that lands directly i
 - **Version binding.** A pin set is bound to the upstream's declared implementation name/version; a version change invalidates pins and triggers the same re-pin flow — which is also the hook where §9 profile diffing lands ("v1.4.3 requests capabilities v1.4.2 did not").
 
 This replaces the v1 framing of R1. Signature verification (when a publisher provides one) is now *one input* to pinning, not the whole mechanism.
+
+**Implementation status and a known gap (post-v0.1.0).** Pin checking is currently *startup-scoped*: definitions are verified when the proxy connects to an upstream, and pins persist across runs. A server that mutates its definitions mid-session without a reconnect is therefore not re-checked. This was a deliberate v0.1 simplification — it proves the identical security property with no interior mutability — but the landscape survey (§15) found the mid-session re-check shipping elsewhere, which removes "not worth the machinery" as a defence. It is promoted from optional refinement to a **Phase 1 requirement**: re-verify on every `tools/list` the client issues, and treat a mid-session mutation exactly as a startup one — withhold, ledger-record, require explicit re-pin.
 
 ---
 
@@ -259,7 +265,7 @@ A blocked call waiting on human approval races the client's tool timeout (common
 
 **The v1 rules — exactly three, each mapped to a named 2026 incident class:**
 
-- **R1 — Integrity & pinning** (§4): artifact hash/signature when available; tool-definition pinning and rug-pull blocking always. *Maps to:* LiteLLM PyPI supply-chain backdoor; MCP tool-poisoning class.
+- **R1 — Integrity & pinning** (§4): artifact hash/signature when available; tool-definition pinning and rug-pull blocking always. *Maps to:* LiteLLM PyPI supply-chain backdoor; MCP tool-poisoning class; and most directly **postmark-mcp**, which shipped fifteen clean versions before adding a single line of exfiltration code — a trusted server going bad at version *n+1*, which is exactly what pinning plus version binding is for.
 - **R2 — Capability profile, checked on argument shape** (§9): by effect and argument shape, never by tool name alone — domain allowlists, path prefixes post-canonicalization, exec constraints. *Maps to:* the Cursor allowlist bypass (allowlisted *name*, hostile payload).
 - **R3 — Taint → sink** (§7–8): untrusted-derived data must not reach an exfiltration sink; provenance for medium tier, session taint for high tier, cumulative scoring against chunking. *Maps to:* EchoLeak-class zero-click exfiltration. The rule that justifies the architecture and demos best.
 
@@ -308,3 +314,38 @@ A blocked call waiting on human approval races the client's tool timeout (common
 3. Published AgentDojo numbers: attack-success and utility, side by side.
 4. One-line install into an existing MCP client config.
 5. False-positive rate low enough that the author leaves it enabled on his own daily setup — the only benchmark that predicts anyone else will.
+
+---
+
+## 15. Prior art and competitive position (added after v0.1.0; landscape survey)
+
+v1 was designed without surveying the field, on the assumption that the category was thin. **It is not.** A survey conducted after Phase 0 shipped found several projects occupying adjacent ground. Recording that here, because a design document that ignores its neighbours is worthless as an engineering artifact.
+
+| Project | Shape | Notes |
+| --- | --- | --- |
+| **pipelock** (Go, ~800★, open-core) | Inline proxy across HTTP, WebSocket, MCP, A2A; sandbox and OS containment | The serious incumbent. Already ships session taint propagation, tool-poisoning detection **including mid-session rug-pull**, DLP, signed action receipts with transparency-log anchoring, SLSA/SBOM. Enterprise features are ELv2 (source-available, not OSI-open) and license-gated. |
+| **ressl/mcp-firewall** | MCP security gateway | Signature-based: "Injection Detector — 50+ patterns". |
+| **preloop** | Agent control plane | Adjacent rather than competing: model gateway, budgets, approvals, FinOps. |
+| **arbiter-mcp-firewall**, **vellaveto-mcp** (crates.io) | MCP tool-call firewall; MCP DLP/injection detection | Smaller; both pattern-based. |
+
+**Capability differences worth tracking** (engineering notes, not a scoreboard): mid-session rug-pull re-check exists elsewhere and is promoted to a Phase 1 requirement here (§4); signed receipts with external anchoring are a stronger audit primitive than plain JSONL and are queued; protocol breadth beyond MCP is deliberately out of scope.
+
+**The three claims that remain genuinely differentiating:**
+
+1. **Structural, not signature-based.** Every tool surveyed detects badness *in content* via maintained pattern lists (32 injection patterns here, 50+ there, 65 DLP signatures). This design refuses that entirely (§12), enforcing on provenance and integrity instead. This is the substantive disagreement in the category, and §11's Phase 2 benchmark exists to settle it with numbers rather than assertion.
+2. **Aggregating, not per-server.** The surveyed proxies wrap one upstream per instance. A cross-server flow — read through one server, exfiltrate through another — is structurally invisible to that placement (§2).
+3. **Fully Apache-2.0.** No open-core tier, no license key, no source-available enterprise split. For infrastructure that sits in the enforcement path, "you can read and fork all of it" is a security property, not a licensing preference.
+
+**Consequence for positioning:** Phase 0 is not a prelude to the interesting work. Two of the three most-cited MCP incident classes — the postmark-mcp trusted-server rug pull (§11 R1) and the Copilot self-disarm (§3) — are already blocked and demonstrable. The exfiltration case (R3) remains the honest gap, and remains the reason Phase 1 exists.
+
+---
+
+## 16. Engineering methodology (added after v0.1.0)
+
+The practices below emerged during Phase 0 and are now standing commitments, recorded because *how* this is built is part of the argument that it can be trusted.
+
+- **Adversarial self-audit.** Before any public milestone, the enforcement gate is probed with constructed bypass attempts — prefix collisions, mid-path symlinks, non-existent targets, encoded paths, hardlinks — and every divergence is written down rather than quietly fixed. The v0.1.0 audit found a real one (inode aliasing, §3 limitations), reasoned about whether it was in scope, and documented it.
+- **Mutation-test the security-critical tests.** A test that passes proves nothing until it has been shown to fail. Tests guarding enforcement paths are verified by deliberately breaking the code they cover and confirming that *those* tests — and ideally only those — go red.
+- **Demos are regression guards, not theatre.** Both shipped demos assert their own security property and exit non-zero if it regresses, so "the demo still works" is a real claim about enforcement rather than about narration.
+- **Limitations are published, not buried.** `SECURITY.md` states what the current release does *not* defend against, in the same document that says what it does. A limitation you can point to is worth more than a green checkmark that hides one.
+- **The decision path stays small and pure.** Enforcement logic is a pure function of its inputs; side effects (ledger writes, process spawning, operator output) live at the edges. This is what makes exhaustive unit testing of the policy engine possible at all.
