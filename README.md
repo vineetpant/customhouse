@@ -15,6 +15,9 @@ See [`DESIGN-v2.md`](./DESIGN-v2.md) for the full design and threat model.
 
 ## See it in 30 seconds
 
+Needs only a [Rust toolchain](https://rustup.rs) (1.92+). No other dependencies —
+the demos build and run everything themselves.
+
 ```sh
 git clone <this-repo> && cd bulkhead
 ./demo/run.sh
