@@ -4,7 +4,18 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.92"
 license = "Apache-2.0"
-description = "Deterministic reference monitor for the MCP tool boundary — an aggregating proxy that enforces that untrusted input cannot drive sensitive output."
+# Describes what this release actually does. The flow-enforcement rule (untrusted
+# input must not reach a sensitive sink) is Phase 1 and deliberately not claimed
+# here — see SECURITY.md.
+description = "Deterministic reference monitor for the MCP tool boundary: an aggregating proxy with compiled-in self-protection, tool-definition pinning against rug pulls, and an append-only audit ledger."
+repository = "https://github.com/vineetpant/penstock"
+readme = "README.md"
+keywords = ["mcp", "security", "ai-agents", "prompt-injection", "proxy"]
+categories = ["command-line-utilities", "network-programming", "development-tools"]
+# Only CI config is excluded. The design doc, examples and demos ship with the
+# crate: for a security tool, being able to read the reasoning and re-run the
+# demos from the published package is worth more than a smaller tarball.
+exclude = ["/.github"]
 
 [[bin]]
 name = "penstock"
