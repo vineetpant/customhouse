@@ -11,42 +11,63 @@ and its tools, and enforces rules there.
 > reaching a sensitive sink is **on the roadmap, not in this release.** See
 > [Roadmap](#roadmap) and [`SECURITY.md`](./SECURITY.md).
 
-## See it in 30 seconds
+## See it stop a real attack
 
-Needs only a [Rust toolchain](https://rustup.rs) (1.92+). No other dependencies —
-the demo builds and runs everything itself, in a throwaway directory.
+An agent talked into disabling its own guardrail is not hypothetical — it is
+[what happened to GitHub Copilot](https://www.microsoft.com/en-us/security/blog/2026/06/30/securing-ai-agents-ai-tools-move-from-reading-acting/),
+where the guardrail lived *inside* the agent, so the agent could remove it.
+
+This demo runs the **official `@modelcontextprotocol/server-filesystem`** — real
+software, real permissions — and puts Penstock's own state *inside the directory
+that server is allowed to access*. The server can genuinely read the ledger and
+overwrite the pin store. Only the compiled-in gate stands in the way.
+
+```sh
+./demo/run_selfprotect_real.sh      # needs Node; the others need only Rust
+```
+
+Actual output, temp paths shortened:
+
+```
+── Penstock vs a real MCP server (@modelcontextprotocol/server-filesystem) ──
+  14 tools aggregated and pinned from the real server
+
+── ALLOWED: an ordinary file read passes straight through ──
+  ✓ fs__read_text_file -> "an ordinary file the agent is entitled to read"
+
+── DENIED: the agent tries to read Penstock's own audit ledger ──
+  $PENSTOCK_HOME/ledger.jsonl
+  ✗ refused (-32602): denied by Penstock self-protection: operation resolves onto Penstock's own files
+
+── DENIED: the agent tries to overwrite Penstock's pin store ──
+  $PENSTOCK_HOME/pins.json
+  ✗ refused (-32602): denied by Penstock self-protection: operation resolves onto Penstock's own files
+
+A real filesystem server, holding real permissions over these files,
+was refused both times — and the refusals are in the ledger it could not read.
+```
+
+Every outcome is **asserted**. If self-protection regressed, the demo exits
+non-zero rather than printing something reassuring.
+
+### The other two demos
+
+Both need only a [Rust toolchain](https://rustup.rs) (1.92+) — no other
+dependencies, everything runs in a throwaway directory.
 
 ```sh
 git clone https://github.com/vineetpant/penstock && cd penstock
-./demo/run.sh
+./demo/run.sh            # allow, self-protection deny, and the audit ledger
+./demo/run_rugpull.sh    # a poisoned tool definition, withheld until re-pinned
 ```
 
-A real MCP session runs against the proxy. Nothing below is mocked up for the
-README — it is the actual output, with temp paths shortened:
-
-```
-── ALLOWED: a normal call routes through to the upstream ──
-  ✓ mock__echo returned: "hello through Penstock"
-
-── DENIED: self-protection blocks a call targeting Penstock's own files ──
-    the model asks mock__echo to touch Penstock's own ledger:
-    $PENSTOCK_HOME/ledger.jsonl
-  ✗ blocked (JSON-RPC -32602): denied by Penstock self-protection: operation resolves onto Penstock's own files
-    the client is told nothing about which path — that detail goes only to the operator ledger.
-
-── The audit trail ($PENSTOCK_HOME/ledger.jsonl) ──
-{"kind":"metadata","id":0,"ts_ms":1785103954479,"server":"mock","tool":"mock__echo","event":"pinned"}
-{"kind":"call","id":1,"ts_ms":1785103954481,"tool":"mock__echo","server":"mock","decision":"allow"}
-{"kind":"call","id":2,"ts_ms":1785103954482,"tool":"mock__echo","server":"mock","decision":"deny","detail":"$PENSTOCK_HOME/ledger.jsonl"}
-```
-
-The denial is asserted, not narrated: if self-protection regressed, the demo
-fails instead of printing a comforting lie.
-
-**A rug pull, blocked** — `./demo/run_rugpull.sh` pins a tool's definition, lets
-the upstream swap that description for a prompt injection, and shows Penstock
-withholding the changed tool (printing the real before/after from its ledger)
-until you run `penstock repin <server>`.
+**The rug pull one matters.** `postmark-mcp` shipped
+[fifteen clean versions before adding a line of exfiltration code](https://www.upguard.com/blog/mcp-security-incidents).
+`run_rugpull.sh` reproduces that shape: Penstock pins a tool's definition, the
+upstream swaps the description for a prompt injection, and Penstock **withholds**
+the changed tool — printing the real before/after out of its ledger — until you
+run `penstock repin <server>`. It never serves the old definition while the
+upstream would execute the new one.
 
 ## What it does today
 
@@ -106,18 +127,33 @@ two self-asserting demos rather than by vibes.
 ## Prior art, and what is different here
 
 Penstock is not the first attempt to put a control point between an agent and
-its tools. Adjacent work includes **Scandar**, which tracks taint through content
-fingerprints, and **Agent Shield**, which uses a proxy placement similar to this
-one. Both are worth your attention, and where the ideas overlap that is
-convergence on a sensible design, not novelty here.
+its tools.
 
-The narrower claim: Penstock is **open source, aggregating** (one chokepoint
-across all servers rather than one guard per server), **deterministic** (no model
-anywhere in the enforcement path), **inline** (decisions happen before a call is
-forwarded, not in a report afterwards), and mediates **both directions** — what
-reaches the model, including tool metadata, as well as what leaves it. Every one
-of those is a design choice with costs, and they are argued in
-[`DESIGN-v2.md`](./DESIGN-v2.md).
+[pipelock](https://github.com/luckyPipewrench/pipelock),
+[ressl/mcp-firewall](https://github.com/ressl/mcp-firewall) and
+[preloop](https://github.com/preloop/preloop) occupy adjacent ground. Where
+designs converge, that is a sign the problem is real.
+
+Three things are genuinely different here, and each has a cost:
+
+- **Structural, not signature-based.** Every tool above detects badness *in
+  content* via maintained pattern lists — 32 injection patterns here, 50+ there,
+  65 DLP signatures. Penstock refuses that approach entirely. Nothing judges what
+  content *says*; decisions rest on provenance and integrity — where data came
+  from, where it is going, whether a definition changed. **The cost:** signatures
+  catch known payloads that structure alone may wave through. This is a genuine
+  disagreement about how agent security should work, and Phase 2's benchmarks
+  exist to settle it with numbers rather than argument.
+- **Aggregating, not per-server.** Those proxies wrap one upstream per instance.
+  A cross-server flow — read through one server, exfiltrate through another — is
+  structurally invisible to that placement. One chokepoint can see it. **The
+  cost:** a single point of failure, and every server behind one config.
+- **Fully Apache-2.0.** No open-core tier, no license key, no source-available
+  enterprise split. For something sitting in the enforcement path, "you can read
+  and fork all of it" is a security property. **The cost:** no commercial
+  engine behind it.
+
+All three are argued, with their trade-offs, in [`DESIGN-v2.md`](./DESIGN-v2.md).
 
 ## Install
 
