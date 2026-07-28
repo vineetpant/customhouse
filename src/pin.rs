@@ -1,7 +1,7 @@
 //! Metadata pinning store (DESIGN-v2.md §4).
 //!
 //! Tool descriptions and schemas are attacker-controlled text that lands in
-//! model context, so Bulkhead pins each tool definition at first sight and
+//! model context, so Penstock pins each tool definition at first sight and
 //! refuses to serve a definition that has silently changed (a rug pull).
 //!
 //! A leaf module: it depends only on `paths` (for the store location). It knows
@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use rmcp::model::Tool;
 use serde::{Deserialize, Serialize};
 
-use crate::paths::bulkhead_home;
+use crate::paths::penstock_home;
 
 const PIN_FILE: &str = "pins.json";
 
@@ -110,7 +110,7 @@ struct ServerPins {
 
 /// The persistent set of pinned tool definitions, keyed by server.
 ///
-/// Lives at `<bulkhead-home>/pins.json`, inside the directory the §3 gate
+/// Lives at `<penstock-home>/pins.json`, inside the directory the §3 gate
 /// protects — so a mediated call cannot read or rewrite it (I-5, same property
 /// as the ledger; asserted by a test below). Unlike the ledger it is mutable
 /// state, rewritten in full on change, never appended.
@@ -120,9 +120,9 @@ pub struct PinStore {
 }
 
 impl PinStore {
-    /// Open the store at `<bulkhead-home>/pins.json` (production).
+    /// Open the store at `<penstock-home>/pins.json` (production).
     pub fn open() -> Self {
-        Self::open_in(&bulkhead_home())
+        Self::open_in(&penstock_home())
     }
 
     /// Open the store under an explicit home directory (tests supply a tempdir).
@@ -130,7 +130,7 @@ impl PinStore {
     pub fn open_in(home: &Path) -> Self {
         let path = home.join(PIN_FILE);
         let data = Self::load(&path).unwrap_or_else(|e| {
-            eprintln!("bulkhead: pin store unreadable, starting empty: {e}");
+            eprintln!("penstock: pin store unreadable, starting empty: {e}");
             PinData::default()
         });
         Self { path, data }
@@ -248,7 +248,7 @@ impl PinStore {
     }
 
     /// Forget a server's pins so its current definitions are re-pinned fresh on
-    /// the next connect. This is what `bulkhead repin <server>` does. Returns
+    /// the next connect. This is what `penstock repin <server>` does. Returns
     /// whether the server had any pins.
     pub fn forget_server(&mut self, server: &str) -> bool {
         self.data.servers.remove(server).is_some()

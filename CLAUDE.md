@@ -1,24 +1,24 @@
-# Bulkhead — Claude Code Instructions
+# Penstock — Claude Code Instructions
 
 `DESIGN-v2.md` is the source of truth; when it disagrees with this file, it wins.
 
 ## Project summary
 
-Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggregating proxy between an agent client and N upstream MCP servers that enforces the rule that untrusted input can't drive sensitive output. **Hard constraint: no LLM/model call and no network access exists anywhere in the enforcement path — policy evaluation is a pure function.**
+Penstock is a deterministic reference monitor for the MCP tool boundary: an aggregating proxy between an agent client and N upstream MCP servers that enforces the rule that untrusted input can't drive sensitive output. **Hard constraint: no LLM/model call and no network access exists anywhere in the enforcement path — policy evaluation is a pure function.**
 
 ## Implementation map (where things are — not a changelog; git has history)
 
 - **Status:** Phase 0 complete (v0.1.0): aggregation + namespacing + routing,
   §3 invariant gate, append-only ledger, §4 metadata pinning (withhold on
-  mutation, `bulkhead repin <server>`). Next: Phase 1 (taint/provenance, tiered
+  mutation, `penstock repin <server>`). Next: Phase 1 (taint/provenance, tiered
   policy engine, R1–R3, consent).
-- **Two enforcement points.** (1) The call chokepoint: `BulkheadProxy::call_tool`
+- **Two enforcement points.** (1) The call chokepoint: `PenstockProxy::call_tool`
   runs `invariants.assess()` → `ledger.record_call()` → route; Phase 1 rules slot
   in here. `evaluate()` is the client-clean projection of `assess()`. (2) Connect
   time: `Registry::connect` pin-checks each upstream's tools and withholds mutated
   ones from the served set before anything is exposed.
 - **Modules & dependency direction** (leaves at the bottom; no lateral imports):
-  `paths` (path resolution + `bulkhead_home()`), `config` (`bulkhead.toml`), and
+  `paths` (path resolution + `penstock_home()`), `config` (`penstock.toml`), and
   `decision` (`Decision`/`Assessment` vocabulary), and `pin` (pin store +
   canonical-definition diffing) are leaves; `invariant` (§3 gate) and `ledger`
   (append-only JSONL) depend only on leaves; `upstream` (`Registry`, routing,
@@ -65,7 +65,7 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
   modules (`invariant`, `ledger`) depend only on leaves; `proxy` is the
   composition root. `invariant`/`ledger`/`upstream` must never import each other
   in production code — if two need a thing, it belongs in a leaf they both depend
-  on (that is why `bulkhead_home` lives in `paths` and `Decision` in `decision`).
+  on (that is why `penstock_home` lives in `paths` and `Decision` in `decision`).
   Exception: `#[cfg(test)]` may cross laterally when the cross-module property
   *is* the test — the I-5 drift test in `ledger` imports `Invariants` by design;
   do not "fix" it.
@@ -87,7 +87,7 @@ Bulkhead is a deterministic reference monitor for the MCP tool boundary: an aggr
 - **Client-facing vs operator-facing types stay separate by construction.**
   `Decision` (crosses to the client) carries no path; `Assessment` (operator-only)
   does. Don't merge them.
-- **Tests are hermetic:** tempdirs, never the real `~/.bulkhead`; a pure unit
+- **Tests are hermetic:** tempdirs, never the real `~/.penstock`; a pure unit
   should be testable without spawning a process.
 - **New dependency or newtype requires a one-line "considered and rejected"
   rationale** in the commit or code — dep-minimalism is a security property here.

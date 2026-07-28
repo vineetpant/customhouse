@@ -1,4 +1,4 @@
-//! Bulkhead configuration: the set of upstream MCP servers to aggregate.
+//! Penstock configuration: the set of upstream MCP servers to aggregate.
 //!
 //! Configuration is loaded once at startup and never re-read mid-flight, so a
 //! change to the running policy always requires an action outside the mediated
@@ -8,11 +8,11 @@ use serde::Deserialize;
 use std::path::Path;
 
 /// The separator between an upstream's name and a tool's own name in the
-/// namespaced identifier Bulkhead exposes to the client (`web__fetch`). Upstream
+/// namespaced identifier Penstock exposes to the client (`web__fetch`). Upstream
 /// names may not contain it, so routing can split on the first occurrence.
 pub const NAMESPACE_SEP: &str = "__";
 
-/// Top-level configuration, deserialized from `bulkhead.toml`.
+/// Top-level configuration, deserialized from `penstock.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -34,7 +34,7 @@ pub struct UpstreamConfig {
     pub args: Vec<String>,
 }
 
-/// Reasons a configuration is rejected. Bulkhead fails closed on any of them.
+/// Reasons a configuration is rejected. Penstock fails closed on any of them.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("failed to read config file: {0}")]

@@ -8,14 +8,14 @@
 
 use std::path::{Component, Path, PathBuf};
 
-/// The Bulkhead home directory: `BULKHEAD_HOME`, else `~/.bulkhead`. Holds
+/// The Penstock home directory: `PENSTOCK_HOME`, else `~/.penstock`. Holds
 /// config, ledger, and pin store. The invariant gate protects this location and
 /// the ledger writes inside it, so the ledger is covered by I1 for free — see the
 /// I-5 test in `ledger`.
-pub fn bulkhead_home() -> PathBuf {
-    match std::env::var_os("BULKHEAD_HOME") {
+pub fn penstock_home() -> PathBuf {
+    match std::env::var_os("PENSTOCK_HOME") {
         Some(value) => expand_tilde(&value.to_string_lossy()),
-        None => home_dir().unwrap_or_default().join(".bulkhead"),
+        None => home_dir().unwrap_or_default().join(".penstock"),
     }
 }
 

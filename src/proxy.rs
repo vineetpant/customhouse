@@ -1,6 +1,6 @@
 //! The aggregating MCP proxy — the composition root and the enforcement point.
 //!
-//! `BulkheadProxy` presents Bulkhead to the client as a single MCP server that
+//! `PenstockProxy` presents Penstock to the client as a single MCP server that
 //! exposes the merged, namespaced tools of its upstream servers and routes each
 //! call back to the owning upstream. Enforcement happens in two places:
 //!
@@ -32,19 +32,19 @@ use crate::ledger::Ledger;
 use crate::pin::PinStore;
 use crate::upstream::{CallError, Registry, UpstreamError};
 
-/// Bulkhead presented to the client as a single aggregating MCP server.
+/// Penstock presented to the client as a single aggregating MCP server.
 ///
 /// Cheap to clone: the shared registry of upstream connections and the resolved
 /// self-protection invariants live behind `Arc`s, so the proxy can be handed to
 /// the MCP service by value.
 #[derive(Clone)]
-pub struct BulkheadProxy {
+pub struct PenstockProxy {
     registry: Arc<Registry>,
     invariants: Arc<Invariants>,
     ledger: Arc<Ledger>,
 }
 
-impl BulkheadProxy {
+impl PenstockProxy {
     /// A proxy with no upstreams; advertises an empty tool set. Self-protection
     /// invariants are still resolved so the gate is never absent. The ledger is
     /// disabled here (this constructor is for tests that never route calls).
@@ -60,7 +60,7 @@ impl BulkheadProxy {
     ///
     /// `config_path` is the file `config` was loaded from, if any; it is added
     /// to the protected set so a mediated call cannot rewrite it. The ledger and
-    /// the invariant gate both resolve the same Bulkhead home, so the ledger is
+    /// the invariant gate both resolve the same Penstock home, so the ledger is
     /// written inside the directory the gate protects (I-5).
     pub async fn connect(
         config: &Config,
@@ -73,7 +73,7 @@ impl BulkheadProxy {
         // the audit record.
         for event in &events {
             if let Some(summary) = event.summary() {
-                eprintln!("bulkhead: {summary}");
+                eprintln!("penstock: {summary}");
             }
             ledger.record_metadata(&event.server, &event.qualified_tool(), &event.outcome);
         }
@@ -89,17 +89,17 @@ impl BulkheadProxy {
         self.registry.tools().len()
     }
 
-    /// The identity Bulkhead presents to clients on initialize.
+    /// The identity Penstock presents to clients on initialize.
     pub fn server_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             // MCP 2025-11-25 (ProtocolVersion::LATEST in rmcp 2.2.0).
             .with_protocol_version(ProtocolVersion::LATEST)
-            .with_server_info(Implementation::new("bulkhead", crate::version()))
-            .with_instructions("Bulkhead: a deterministic proxy over your MCP servers.")
+            .with_server_info(Implementation::new("penstock", crate::version()))
+            .with_instructions("Penstock: a deterministic proxy over your MCP servers.")
     }
 }
 
-impl ServerHandler for BulkheadProxy {
+impl ServerHandler for PenstockProxy {
     fn get_info(&self) -> ServerInfo {
         self.server_info()
     }
@@ -129,7 +129,7 @@ impl ServerHandler for BulkheadProxy {
         let server = self.registry.server_of(&tool);
         self.ledger.record_call(&request, server, &assessment);
         if let Decision::Deny { reason } = assessment.decision {
-            eprintln!("bulkhead: self-protection denied tool `{tool}`");
+            eprintln!("penstock: self-protection denied tool `{tool}`");
             return Err(McpError::invalid_params(reason, None));
         }
 
@@ -159,13 +159,13 @@ pub enum ServeError {
     Wait(#[from] tokio::task::JoinError),
 }
 
-/// Serve Bulkhead as an MCP server over stdio until the client disconnects.
+/// Serve Penstock as an MCP server over stdio until the client disconnects.
 ///
 /// stdout carries the MCP protocol; all logging must go to stderr.
 pub async fn serve_stdio(config: Config, config_path: Option<&Path>) -> Result<(), ServeError> {
-    let proxy = BulkheadProxy::connect(&config, config_path).await?;
+    let proxy = PenstockProxy::connect(&config, config_path).await?;
     eprintln!(
-        "bulkhead {}: aggregating {} upstream(s), exposing {} tool(s)",
+        "penstock {}: aggregating {} upstream(s), exposing {} tool(s)",
         crate::version(),
         config.upstreams.len(),
         proxy.tool_count(),
@@ -183,26 +183,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn presents_as_bulkhead() {
-        let info = BulkheadProxy::empty().server_info();
-        assert_eq!(info.server_info.name, "bulkhead");
+    fn presents_as_penstock() {
+        let info = PenstockProxy::empty().server_info();
+        assert_eq!(info.server_info.name, "penstock");
         assert_eq!(info.server_info.version, crate::version());
     }
 
     #[test]
     fn negotiates_supported_protocol_version() {
-        let info = BulkheadProxy::empty().server_info();
+        let info = PenstockProxy::empty().server_info();
         assert_eq!(info.protocol_version, ProtocolVersion::V_2025_11_25);
     }
 
     #[test]
     fn advertises_tools_capability() {
-        let info = BulkheadProxy::empty().server_info();
+        let info = PenstockProxy::empty().server_info();
         assert!(info.capabilities.tools.is_some());
     }
 
     #[test]
     fn empty_proxy_exposes_no_tools() {
-        assert_eq!(BulkheadProxy::empty().tool_count(), 0);
+        assert_eq!(PenstockProxy::empty().tool_count(), 0);
     }
 }

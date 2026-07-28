@@ -1,17 +1,17 @@
 # Security
 
-Bulkhead is a security tool, so it owes you a precise account of what it does
+Penstock is a security tool, so it owes you a precise account of what it does
 and does not defend against. This document is that account. `DESIGN-v2.md` holds
 the full threat model; this is the operator-facing summary, kept honest.
 
 **Applies to:** v0.1.0 (Phase 0). Pre-1.0 and not yet production-hardened.
 
-## What Bulkhead enforces today
+## What Penstock enforces today
 
 | Property | Mechanism |
 | --- | --- |
-| An upstream cannot silently change a tool's definition | Definitions are pinned at first sight; a changed definition is **withheld** — never served — until an operator runs `bulkhead repin <server>` |
-| A mediated call cannot reach Bulkhead's own files | Compiled-in invariants deny any call whose path-like argument resolves into the Bulkhead home directory, the binary, or the active config |
+| An upstream cannot silently change a tool's definition | Definitions are pinned at first sight; a changed definition is **withheld** — never served — until an operator runs `penstock repin <server>` |
+| A mediated call cannot reach Penstock's own files | Compiled-in invariants deny any call whose path-like argument resolves into the Penstock home directory, the binary, or the active config |
 | The audit trail cannot be read or edited through the proxy | The ledger is append-only and lives inside the protected home directory |
 | Enforcement is deterministic | No model call, no network access, and no nondeterminism anywhere in the decision path |
 
@@ -21,7 +21,7 @@ if it regresses.
 
 ## Not implemented yet (Phase 1)
 
-Bulkhead's headline goal — *untrusted input must not reach a sensitive sink* — is
+Penstock's headline goal — *untrusted input must not reach a sensitive sink* — is
 **not yet enforced**. v0.1.0 is a reference monitor with self-protection and
 metadata pinning; it passes tool calls through otherwise. Specifically absent:
 
@@ -46,10 +46,10 @@ Self-protection identifies protected files **by path**. Canonicalization resolve
 symlinks, `..`, and `~`, but two things escape it:
 
 - **Inode aliases.** A hardlink to a protected file, or a bind mount of the
-  Bulkhead home, is a *second real name* for the same data. It resolves outside
+  Penstock home, is a *second real name* for the same data. It resolves outside
   every protected root, so it is allowed, and reading it returns the protected
   file's contents.
-- **Time-of-check/time-of-use.** Bulkhead checks a path and then forwards the
+- **Time-of-check/time-of-use.** Penstock checks a path and then forwards the
   call; the *upstream server* opens the file moments later. The filesystem can
   change in between.
 
@@ -64,10 +64,10 @@ exploiting this requires filesystem access outside MCP — and an attacker with
 that access can simply read the file directly. It grants no capability the
 malicious-host case does not already grant.
 
-**Bulkhead is not a sandbox.** Kernel-level mechanisms (Landlock, Seatbelt,
+**Penstock is not a sandbox.** Kernel-level mechanisms (Landlock, Seatbelt,
 containers) enforce filesystem confinement atomically and handle aliasing
-natively. Pair Bulkhead with one for hostile-host threat models. As defense in
-depth, run Bulkhead's state under a different OS user than your filesystem
+natively. Pair Penstock with one for hostile-host threat models. As defense in
+depth, run Penstock's state under a different OS user than your filesystem
 servers.
 
 ### Path-like arguments are identified heuristically
@@ -80,7 +80,7 @@ schemas (which would remove the guesswork) arrive with capability profiles.
 
 ### Metadata pinning is startup-scoped and tools-only
 
-Definitions are checked when Bulkhead connects to an upstream. A server that
+Definitions are checked when Penstock connects to an upstream. A server that
 mutates its definitions *mid-session*, without a reconnect, is not currently
 re-checked. Pinning also covers tools only — `resources/list` and `prompts/list`
 are not pinned, because those surfaces are not yet mediated.
@@ -95,6 +95,6 @@ boundary); multi-tenant policy distribution.
 ## Reporting a vulnerability
 
 Please report privately via GitHub's private vulnerability reporting rather than
-a public issue. Findings that show a mediated call reaching Bulkhead's own state,
+a public issue. Findings that show a mediated call reaching Penstock's own state,
 or a changed tool definition being served without an explicit re-pin, are the
 most valuable — those are the properties v0.1.0 actually claims.

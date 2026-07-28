@@ -1,5 +1,5 @@
 [package]
-name = "bulkhead"
+name = "penstock"
 version = "0.1.0"
 edition = "2021"
 rust-version = "1.92"
@@ -7,11 +7,11 @@ license = "Apache-2.0"
 description = "Deterministic reference monitor for the MCP tool boundary — an aggregating proxy that enforces that untrusted input cannot drive sensitive output."
 
 [[bin]]
-name = "bulkhead"
+name = "penstock"
 path = "src/main.rs"
 
 [lib]
-name = "bulkhead"
+name = "penstock"
 path = "src/lib.rs"
 
 [dependencies]

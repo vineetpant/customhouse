@@ -1,23 +1,23 @@
-//! Bulkhead binary entry point.
+//! Penstock binary entry point.
 //!
-//! `bulkhead serve [--config <path>]` runs the aggregating MCP proxy over stdio;
-//! `bulkhead repin <server>` accepts an upstream's current tool definitions.
+//! `penstock serve [--config <path>]` runs the aggregating MCP proxy over stdio;
+//! `penstock repin <server>` accepts an upstream's current tool definitions.
 //! stdout carries the MCP protocol; diagnostics go to stderr.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use bulkhead::{Config, PinStore};
+use penstock::{Config, PinStore};
 
 /// Config file consulted when `--config` is not given, if it exists.
-const DEFAULT_CONFIG_PATH: &str = "bulkhead.toml";
+const DEFAULT_CONFIG_PATH: &str = "penstock.toml";
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
 
     match args.next().as_deref() {
         Some("--version" | "-V") => {
-            println!("{} {}", bulkhead::name(), bulkhead::version());
+            println!("{} {}", penstock::name(), penstock::version());
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") => {
@@ -27,14 +27,14 @@ fn main() -> ExitCode {
         None | Some("serve") => run_serve(args.collect()),
         Some("repin") => run_repin(args.collect()),
         Some(other) => {
-            eprintln!("bulkhead: unknown argument `{other}`");
+            eprintln!("penstock: unknown argument `{other}`");
             print_usage();
             ExitCode::FAILURE
         }
     }
 }
 
-/// `bulkhead repin <server>` — forget a server's pins so its current tool
+/// `penstock repin <server>` — forget a server's pins so its current tool
 /// definitions are accepted (re-pinned fresh) on the next `serve`. Deliberately
 /// minimal: it edits the pin store on disk and exits, a state change made
 /// outside the mediated surface. No interactive approval protocol.
@@ -42,12 +42,12 @@ fn run_repin(rest: Vec<String>) -> ExitCode {
     let server = match rest.as_slice() {
         [server] => server,
         [] => {
-            eprintln!("bulkhead: repin requires a server name");
+            eprintln!("penstock: repin requires a server name");
             print_usage();
             return ExitCode::FAILURE;
         }
         _ => {
-            eprintln!("bulkhead: repin takes exactly one server name");
+            eprintln!("penstock: repin takes exactly one server name");
             return ExitCode::FAILURE;
         }
     };
@@ -55,18 +55,18 @@ fn run_repin(rest: Vec<String>) -> ExitCode {
     let mut pins = PinStore::open();
     if !pins.forget_server(server) {
         // Not an error: nothing to accept is a perfectly fine outcome.
-        eprintln!("bulkhead: no pins found for server `{server}` (nothing to repin)");
+        eprintln!("penstock: no pins found for server `{server}` (nothing to repin)");
         return ExitCode::SUCCESS;
     }
     match pins.save() {
         Ok(()) => {
             eprintln!(
-                "bulkhead: repinned `{server}` — its current definitions will be accepted on next serve"
+                "penstock: repinned `{server}` — its current definitions will be accepted on next serve"
             );
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("bulkhead: failed to save pin store: {e}");
+            eprintln!("penstock: failed to save pin store: {e}");
             ExitCode::FAILURE
         }
     }
@@ -76,7 +76,7 @@ fn run_serve(rest: Vec<String>) -> ExitCode {
     let (config, config_path) = match resolve_config(rest) {
         Ok(loaded) => loaded,
         Err(e) => {
-            eprintln!("bulkhead: {e}");
+            eprintln!("penstock: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -84,15 +84,15 @@ fn run_serve(rest: Vec<String>) -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!("bulkhead: failed to start async runtime: {e}");
+            eprintln!("penstock: failed to start async runtime: {e}");
             return ExitCode::FAILURE;
         }
     };
 
-    match runtime.block_on(bulkhead::serve_stdio(config, config_path.as_deref())) {
+    match runtime.block_on(penstock::serve_stdio(config, config_path.as_deref())) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("bulkhead: {e}");
+            eprintln!("penstock: {e}");
             ExitCode::FAILURE
         }
     }
@@ -129,9 +129,9 @@ fn resolve_config(rest: Vec<String>) -> Result<(Config, Option<PathBuf>), String
 }
 
 fn print_usage() {
-    eprintln!("Usage: bulkhead <command> [options]");
+    eprintln!("Usage: penstock <command> [options]");
     eprintln!("  serve [--config <path>]   Run the aggregating MCP proxy over stdio (default;");
-    eprintln!("                            config default: bulkhead.toml)");
+    eprintln!("                            config default: penstock.toml)");
     eprintln!("  repin <server>            Accept an upstream's current tool definitions");
     eprintln!("  --version | --help");
 }
