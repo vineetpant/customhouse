@@ -8,10 +8,31 @@ Penstock is a deterministic reference monitor for the MCP tool boundary: an aggr
 
 ## Implementation map (where things are — not a changelog; git has history)
 
-- **Status:** Phase 0 complete (v0.1.0): aggregation + namespacing + routing,
-  §3 invariant gate, append-only ledger, §4 metadata pinning (withhold on
-  mutation, `penstock repin <server>`). Next: Phase 1 (taint/provenance, tiered
-  policy engine, R1–R3, consent).
+- **Status:** Phase 0 complete and release-hardened. Next up is Phase 1 — do not
+  start it without a planning pass; it is the project's whole differentiation.
+
+### Phases (implementation plan)
+
+- **Phase 0 — Reference-monitor foundation. DONE.** Aggregation, namespacing,
+  routing; §3 self-protection invariants; append-only ledger; R1 tool-definition
+  pinning with `penstock repin`. Unmediated surfaces (resources, prompts) are
+  refused explicitly rather than silently reported empty. Verified against the
+  real `@modelcontextprotocol/server-filesystem`, not only the bundled mock.
+- **Phase 1 — The moat: deterministic cross-server flow enforcement.** Build the
+  one demo a per-server proxy structurally *cannot* reproduce: tainted content
+  read through server A, exfiltration blocked at server B, no model in the path.
+  **Scope minimally** — origin labelling, provenance match on outbound arguments,
+  one sink tier. **Not** the full taint lattice; that is a later refinement, and
+  building it first is how this phase never ships. Also here: mid-session pin
+  re-check on every client `tools/list` (promoted to a requirement in §4).
+- **Phase 2 — Numbers.** AgentDojo adapter; paired attack-success and
+  task-utility figures published honestly, even if mediocre. This is what turns
+  "structural beats signature-based" from an assertion into a result.
+- **Phase 3 — Capability profiles (R2)** and footprint/regression diffing.
+
+Everything else — signed receipts, fuzzing, more upstream servers, protocol
+breadth — is polish on a thesis that is not yet demonstrated. Resist it until
+Phase 1 lands.
 - **Two enforcement points.** (1) The call chokepoint: `PenstockProxy::call_tool`
   runs `invariants.assess()` → `ledger.record_call()` → route; Phase 1 rules slot
   in here. `evaluate()` is the client-clean projection of `assess()`. (2) Connect
@@ -29,9 +50,15 @@ Penstock is a deterministic reference monitor for the MCP tool boundary: an aggr
 - **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
   `upstream.rs` rather than re-deriving; read crate source in the registry cache
   before using an unverified API.
-- **Live checks / demos:** `./demo/run.sh` (allow, self-protection deny, ledger)
-  and `./demo/run_rugpull.sh` (pin → mutate → withhold → repin). Both hermetic and
-  both hard-fail if their property regresses — use them as smoke tests.
+- **Live checks / demos** (each asserts its own property and exits non-zero if it
+  regresses — treat them as tests, not narration):
+  `./demo/run.sh` (allow, self-protection deny, ledger) and
+  `./demo/run_rugpull.sh` (pin → mutate → withhold → repin) are hermetic, need
+  only the Rust toolchain, and gate CI.
+  `./demo/run_selfprotect_real.sh` runs the same self-protection proof against the
+  real filesystem MCP server with `PENSTOCK_HOME` inside the server's allowed
+  directory; it needs Node, so CI runs it non-blocking. It is the strongest
+  evidence the project has — keep it working.
 
 ## Architecture rules
 
