@@ -28,11 +28,15 @@ use rmcp::{
 };
 
 use crate::config::Config;
-use crate::decision::InvariantOutcome;
+use crate::decision::{Decision, InvariantOutcome};
+use crate::flow::FlowPolicy;
 use crate::invariant::Invariants;
 use crate::ledger::Ledger;
 use crate::pin::PinStore;
+use crate::session::{SessionTaint, TaintSource};
+use crate::sink::SinkMap;
 use crate::upstream::{CallError, Registry, UpstreamError};
+use tokio::sync::Mutex;
 
 /// Penstock presented to the client as a single aggregating MCP server.
 ///
@@ -44,6 +48,18 @@ pub struct PenstockProxy {
     registry: Arc<Registry>,
     invariants: Arc<Invariants>,
     ledger: Arc<Ledger>,
+    flow: Arc<FlowPolicy>,
+    /// Accumulated taint for this session. stdio gives one session per process,
+    /// so process lifetime is session lifetime (§6).
+    ///
+    /// The guard is held across the whole mediated call — assess, route, taint —
+    /// which serialises mediated calls. That is deliberate: MCP clients dispatch
+    /// requests concurrently, and without serialisation a sink call can be
+    /// evaluated *before* an in-flight untrusted read has tainted the session,
+    /// silently letting the exfiltration through. Correctness of the flow rule
+    /// depends on taint from call N being visible to call N+1, so the ordering
+    /// guarantee is worth more than tool-call parallelism the model does not use.
+    taint: Arc<Mutex<SessionTaint>>,
 }
 
 impl PenstockProxy {
@@ -55,6 +71,8 @@ impl PenstockProxy {
             registry: Arc::new(Registry::empty()),
             invariants: Arc::new(Invariants::resolve(None)),
             ledger: Arc::new(Ledger::disabled()),
+            flow: Arc::new(FlowPolicy::new(SinkMap::default(), Default::default())),
+            taint: Arc::new(Mutex::new(SessionTaint::clean())),
         }
     }
 
@@ -83,6 +101,11 @@ impl PenstockProxy {
             registry: Arc::new(registry),
             invariants: Arc::new(Invariants::resolve(config_path)),
             ledger: Arc::new(ledger),
+            flow: Arc::new(FlowPolicy::new(
+                SinkMap::with_overrides(config.sinks.clone()),
+                config.flow,
+            )),
+            taint: Arc::new(Mutex::new(SessionTaint::clean())),
         })
     }
 
@@ -175,15 +198,55 @@ impl ServerHandler for PenstockProxy {
         // the operator-only matched path from the assessment; the client sees
         // only the generic Decision reason. Phase 1 rules slot in right here.
         let assessment = self.invariants.assess(&request);
-        let server = self.registry.server_of(&tool);
-        self.ledger.record_call(&request, server, &assessment);
+        let server = self.registry.server_of(&tool).map(str::to_string);
+        let call_id = self
+            .ledger
+            .record_call(&request, server.as_deref(), &assessment);
         if let InvariantOutcome::Deny { reason } = assessment.outcome {
             eprintln!("penstock: self-protection denied tool `{tool}`");
             return Err(McpError::invalid_params(reason, None));
         }
 
+        // R3: a sink call is weighed against everything untrusted that has
+        // already entered this session — including content from a *different*
+        // upstream. This is the rule a per-server proxy cannot express.
+        //
+        // The guard is taken here and held until after any tainting below, so
+        // concurrent requests cannot slip a sink past an in-flight untrusted read.
+        let mut taint = self.taint.lock().await;
+        let flow = self.flow.assess(&tool, &taint);
+        self.ledger.record_flow(&tool, &flow);
+        match flow.decision {
+            Decision::Allow => {}
+            Decision::Deny { reason } => {
+                eprintln!("penstock: flow policy denied sink `{tool}`");
+                return Err(McpError::invalid_params(reason, None));
+            }
+            Decision::Escalate { reason } => {
+                eprintln!("penstock: flow policy escalated sink `{tool}` for approval");
+                return Err(McpError::invalid_params(reason, None));
+            }
+        }
+
         match self.registry.route_call(request).await {
-            Ok(result) => Ok(result),
+            Ok(result) => {
+                // Taint *before* handing the result back: the content is about
+                // to enter the model's context, so the session is already
+                // compromised by the time the client sees it. Error results
+                // taint too — their content reaches the model either way.
+                if let Some(server) = server {
+                    if self.registry.trust_of(&server).is_untrusted() {
+                        let source = TaintSource {
+                            server,
+                            tool: tool.to_string(),
+                            call_id,
+                        };
+                        self.ledger.record_taint(&source);
+                        taint.taint(source);
+                    }
+                }
+                Ok(result)
+            }
             // An unknown tool is a client mistake (bad params); an upstream
             // failure is wrapped so its origin is preserved, not swallowed.
             Err(error @ CallError::UnknownTool { .. }) => {

@@ -27,9 +27,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rmcp::model::CallToolRequestParams;
 use serde::{Deserialize, Serialize};
 
-use crate::decision::{Assessment, InvariantOutcome};
+use crate::decision::{Assessment, Decision, InvariantOutcome};
+use crate::flow::FlowAssessment;
 use crate::paths::penstock_home;
 use crate::pin::PinOutcome;
+use crate::session::TaintSource;
 
 const LEDGER_FILE: &str = "ledger.jsonl";
 
@@ -92,12 +94,14 @@ impl Ledger {
     /// rather than re-parsed from the tool name. The deny detail is the matched
     /// protected path — operator-only, and safe here precisely because the ledger
     /// is unreadable through the mediated surface (I-5).
+    /// Returns the ledger id assigned to this record, so a later taint event
+    /// can cite the exact call that caused it.
     pub fn record_call(
         &self,
         request: &CallToolRequestParams,
         server: Option<&str>,
         assessment: &Assessment,
-    ) {
+    ) -> u64 {
         let (decision, detail) = match &assessment.outcome {
             InvariantOutcome::Allow => (LedgerDecision::Allow, None),
             InvariantOutcome::Deny { .. } => (
@@ -109,9 +113,10 @@ impl Ledger {
             ),
         };
 
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let entry = CallEntry {
             kind: EntryKind::Call,
-            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            id,
             ts_ms: now_ms(),
             tool: request.name.to_string(),
             server: server.map(str::to_string),
@@ -119,6 +124,60 @@ impl Ledger {
             detail,
         };
         self.write(&entry);
+        id
+    }
+
+    /// Record that an untrusted upstream's result entered the session.
+    ///
+    /// This is the provenance root every later flow denial points back to, so
+    /// it must be written before the result is handed to the client.
+    pub fn record_taint(&self, source: &TaintSource) {
+        self.write(&TaintEntry {
+            kind: EntryKind::Taint,
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            ts_ms: now_ms(),
+            server: source.server.clone(),
+            tool: source.tool.clone(),
+            caused_by_call: source.call_id,
+        });
+    }
+
+    /// Record a flow-rule outcome for a sink call: blocked, escalated, or
+    /// allowed-because-clean. Carries the full provenance chain.
+    pub fn record_flow(&self, tool: &str, assessment: &FlowAssessment) {
+        let Some(class) = assessment.sink_class else {
+            return; // not a sink; the call record already covers it
+        };
+        let outcome = match assessment.decision {
+            Decision::Allow => FlowOutcome::Allowed,
+            Decision::Deny { .. } => FlowOutcome::Blocked,
+            Decision::Escalate { .. } => FlowOutcome::Escalated,
+        };
+        self.write(&FlowEntry {
+            kind: EntryKind::Flow,
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            ts_ms: now_ms(),
+            tool: tool.to_string(),
+            sink_class: class.as_str(),
+            outcome,
+            tainted_by: assessment
+                .taint_sources
+                .iter()
+                .map(|s| format!("{}:{}", s.server, s.call_id))
+                .collect(),
+        });
+    }
+
+    /// Record an operator's answer to an escalation — the other half of the
+    /// evidence pair that makes an approval auditable.
+    pub fn record_approval(&self, sink_class: &str, granted: bool) {
+        self.write(&ApprovalEntry {
+            kind: EntryKind::Approval,
+            id: self.next_id.fetch_add(1, Ordering::Relaxed),
+            ts_ms: now_ms(),
+            sink_class: sink_class.to_string(),
+            granted,
+        });
     }
 
     /// Record a metadata-pinning event: a tool pinned at first sight, or a tool
@@ -190,6 +249,12 @@ enum EntryKind {
     #[default]
     Call,
     Metadata,
+    /// Untrusted content entered the session.
+    Taint,
+    /// A sink call was evaluated against session taint.
+    Flow,
+    /// An operator answered an escalation.
+    Approval,
 }
 
 /// A mediated `tools/call` and its decision.
@@ -228,6 +293,50 @@ struct MetadataEntry {
     reason: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<String>,
+}
+
+/// Untrusted content entering the session.
+#[derive(Serialize)]
+struct TaintEntry {
+    kind: EntryKind,
+    id: u64,
+    ts_ms: u64,
+    server: String,
+    tool: String,
+    /// Ledger id of the call whose result carried the untrusted content.
+    caused_by_call: u64,
+}
+
+/// A sink call weighed against session taint.
+#[derive(Serialize)]
+struct FlowEntry {
+    kind: EntryKind,
+    id: u64,
+    ts_ms: u64,
+    tool: String,
+    sink_class: &'static str,
+    outcome: FlowOutcome,
+    /// `server:call_id` for every taint source cited.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    tainted_by: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+enum FlowOutcome {
+    Allowed,
+    Blocked,
+    Escalated,
+}
+
+/// An operator's answer to an escalation.
+#[derive(Serialize)]
+struct ApprovalEntry {
+    kind: EntryKind,
+    id: u64,
+    ts_ms: u64,
+    sink_class: String,
+    granted: bool,
 }
 
 /// Serializes to `"pinned"` / `"withheld"`.

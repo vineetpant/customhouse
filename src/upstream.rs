@@ -15,7 +15,7 @@ use rmcp::{
     RoleClient, ServiceExt,
 };
 
-use crate::config::{UpstreamConfig, NAMESPACE_SEP};
+use crate::config::{TrustClass, UpstreamConfig, NAMESPACE_SEP};
 use crate::pin::{CheckedTool, PinOutcome, PinStore};
 
 /// The client-namespaced identifier for a tool, e.g. `web` + `fetch` →
@@ -84,6 +84,9 @@ pub struct Registry {
     upstreams: Vec<Upstream>,
     tools: Vec<Tool>,
     routes: HashMap<String, Route>,
+    /// Trust class per upstream name. Absent means untrusted: a server we do
+    /// not know about cannot be assumed clean.
+    trust: HashMap<String, TrustClass>,
 }
 
 impl Registry {
@@ -115,6 +118,7 @@ impl Registry {
                     upstream: config.name.clone(),
                     source,
                 })?;
+            registry.trust.insert(config.name.clone(), config.trust);
             let version = upstream.declared_version();
             let checked = pins.check_server(&config.name, version.as_deref(), tools);
             events.extend(registry.apply_server_checks(&config.name, index, checked)?);
@@ -192,6 +196,12 @@ impl Registry {
     /// callers recover the server structurally instead of re-parsing the name.
     pub fn server_of(&self, namespaced_tool: &str) -> Option<&str> {
         self.routes.get(namespaced_tool).map(|r| r.server.as_str())
+    }
+
+    /// The trust class of an upstream. Unknown servers are untrusted — the
+    /// default-deny attribution the taint model rests on (§7.1).
+    pub fn trust_of(&self, server: &str) -> TrustClass {
+        self.trust.get(server).copied().unwrap_or_default()
     }
 
     /// Route a client tool call to its owning upstream, rewriting the namespaced
