@@ -37,6 +37,25 @@ pub enum SinkClass {
 }
 
 impl SinkClass {
+    /// Parse the stable identifier, for CLI arguments.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "payment_transfer" => Some(SinkClass::PaymentTransfer),
+            "external_send" => Some(SinkClass::ExternalSend),
+            "data_egress" => Some(SinkClass::DataEgress),
+            _ => None,
+        }
+    }
+
+    /// Every class, for CLI help and reports.
+    pub fn all() -> [SinkClass; 3] {
+        [
+            SinkClass::PaymentTransfer,
+            SinkClass::ExternalSend,
+            SinkClass::DataEgress,
+        ]
+    }
+
     /// Stable identifier used in config, ledger records and denial messages.
     pub fn as_str(&self) -> &'static str {
         match self {
@@ -232,6 +251,14 @@ mod tests {
             map.classify("evil__exfiltrate_quietly"),
             Some(SinkClass::DataEgress)
         );
+    }
+
+    #[test]
+    fn identifiers_round_trip_through_parse() {
+        for class in SinkClass::all() {
+            assert_eq!(SinkClass::parse(class.as_str()), Some(class));
+        }
+        assert_eq!(SinkClass::parse("not_a_class"), None);
     }
 
     #[test]

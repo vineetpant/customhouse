@@ -4,6 +4,7 @@
 //! network access exists anywhere in the enforcement path. Policy evaluation
 //! is a pure function.
 
+pub mod approval;
 pub mod config;
 pub mod decision;
 pub mod flow;

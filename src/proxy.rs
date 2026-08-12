@@ -27,6 +27,7 @@ use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler, ServiceExt,
 };
 
+use crate::approval::{self, ApprovalOutcome, ApprovalStore};
 use crate::config::Config;
 use crate::decision::{Decision, InvariantOutcome};
 use crate::flow::FlowPolicy;
@@ -60,6 +61,10 @@ pub struct PenstockProxy {
     /// depends on taint from call N being visible to call N+1, so the ordering
     /// guarantee is worth more than tool-call parallelism the model does not use.
     taint: Arc<Mutex<SessionTaint>>,
+    /// Operator approvals awaiting use. Re-read from disk on each escalation so
+    /// an ack granted in another terminal takes effect without a restart —
+    /// which is the whole point of an out-of-band approval.
+    approvals: Arc<Mutex<ApprovalStore>>,
 }
 
 impl PenstockProxy {
@@ -73,6 +78,7 @@ impl PenstockProxy {
             ledger: Arc::new(Ledger::disabled()),
             flow: Arc::new(FlowPolicy::new(SinkMap::default(), Default::default())),
             taint: Arc::new(Mutex::new(SessionTaint::clean())),
+            approvals: Arc::new(Mutex::new(ApprovalStore::open())),
         }
     }
 
@@ -106,6 +112,7 @@ impl PenstockProxy {
                 config.flow,
             )),
             taint: Arc::new(Mutex::new(SessionTaint::clean())),
+            approvals: Arc::new(Mutex::new(ApprovalStore::open())),
         })
     }
 
@@ -223,8 +230,28 @@ impl ServerHandler for PenstockProxy {
                 return Err(McpError::invalid_params(reason, None));
             }
             Decision::Escalate { reason } => {
-                eprintln!("penstock: flow policy escalated sink `{tool}` for approval");
-                return Err(McpError::invalid_params(reason, None));
+                // An operator may have acked this class out-of-band since the
+                // session started, so consult the store rather than refusing
+                // blind. Re-opening picks up an ack from another terminal.
+                let class = flow.sink_class.expect("escalation implies a sink class");
+                let mut approvals = self.approvals.lock().await;
+                *approvals = ApprovalStore::open();
+                let outcome = approvals.consume(class, approval::now_ms());
+                let granted = matches!(outcome, ApprovalOutcome::Granted);
+                if let Err(e) = approvals.save() {
+                    eprintln!("penstock: failed to persist approval use: {e}");
+                }
+                self.ledger.record_approval(class.as_str(), granted);
+
+                if !granted {
+                    let note = match outcome {
+                        ApprovalOutcome::Expired => " A previous approval had expired.",
+                        _ => "",
+                    };
+                    eprintln!("penstock: flow policy escalated sink `{tool}` for approval");
+                    return Err(McpError::invalid_params(format!("{reason}.{note}"), None));
+                }
+                eprintln!("penstock: operator approval spent for `{tool}`");
             }
         }
 

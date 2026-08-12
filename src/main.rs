@@ -7,6 +7,8 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
+use penstock::approval::{self, ApprovalStore};
+use penstock::sink::SinkClass;
 use penstock::{Config, PinStore};
 
 /// Config file consulted when `--config` is not given, if it exists.
@@ -26,6 +28,7 @@ fn main() -> ExitCode {
         }
         None | Some("serve") => run_serve(args.collect()),
         Some("repin") => run_repin(args.collect()),
+        Some("approve") => run_approve(args.collect()),
         Some(other) => {
             eprintln!("penstock: unknown argument `{other}`");
             print_usage();
@@ -128,10 +131,51 @@ fn resolve_config(rest: Vec<String>) -> Result<(Config, Option<PathBuf>), String
     Ok((config, path))
 }
 
+/// `penstock approve <sink-class>` — authorise one retry of a sink class that
+/// flow policy escalated. Deliberately out-of-band: the agent cannot reach this
+/// command, and §3 stops it writing the store directly.
+fn run_approve(rest: Vec<String>) -> ExitCode {
+    let classes = SinkClass::all()
+        .iter()
+        .map(|c| c.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let name = match rest.as_slice() {
+        [name] => name.clone(),
+        _ => {
+            eprintln!("penstock: approve requires exactly one sink class ({classes})");
+            return ExitCode::FAILURE;
+        }
+    };
+    let Some(class) = SinkClass::parse(&name) else {
+        eprintln!("penstock: unknown sink class `{name}` (expected one of: {classes})");
+        return ExitCode::FAILURE;
+    };
+
+    let mut store = ApprovalStore::open();
+    store.grant(class, approval::now_ms());
+    match store.save() {
+        Ok(()) => {
+            eprintln!(
+                "penstock: approved one {} call. It is single-use and expires in {} minutes.",
+                class.as_str(),
+                approval::VALIDITY_MS / 60_000
+            );
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("penstock: failed to save approval: {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn print_usage() {
     eprintln!("Usage: penstock <command> [options]");
     eprintln!("  serve [--config <path>]   Run the aggregating MCP proxy over stdio (default;");
     eprintln!("                            config default: penstock.toml)");
     eprintln!("  repin <server>            Accept an upstream's current tool definitions");
+    eprintln!("  approve <sink-class>      Authorise one retry of an escalated sink call");
     eprintln!("  --version | --help");
 }
