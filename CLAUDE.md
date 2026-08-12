@@ -8,8 +8,10 @@ Penstock is a deterministic reference monitor for the MCP tool boundary: an aggr
 
 ## Implementation map (where things are — not a changelog; git has history)
 
-- **Status:** Phase 0 complete and release-hardened. Next up is Phase 1 — do not
-  start it without a planning pass; it is the project's whole differentiation.
+- **Status:** Phase 1 (R3 flow enforcement) is **built and measured**. The
+  headline claim is now demonstrable: `./demo/run_flow_block.sh` blocks a
+  cross-server exfiltration against the real filesystem MCP server. Measured
+  behaviour lives in `METRICS.md` (100% block, 40% false positive).
 
 ### Phases (implementation plan)
 
@@ -18,13 +20,12 @@ Penstock is a deterministic reference monitor for the MCP tool boundary: an aggr
   pinning with `penstock repin`. Unmediated surfaces (resources, prompts) are
   refused explicitly rather than silently reported empty. Verified against the
   real `@modelcontextprotocol/server-filesystem`, not only the bundled mock.
-- **Phase 1 — The moat: deterministic cross-server flow enforcement.** Build the
-  one demo a per-server proxy structurally *cannot* reproduce: tainted content
-  read through server A, exfiltration blocked at server B, no model in the path.
-  **Scope minimally** — origin labelling, provenance match on outbound arguments,
-  one sink tier. **Not** the full taint lattice; that is a later refinement, and
-  building it first is how this phase never ships. Also here: mid-session pin
-  re-check on every client `tools/list` (promoted to a requirement in §4).
+- **Phase 1 — The moat: deterministic cross-server flow enforcement. DONE.**
+  Trust classes per upstream (default untrusted), sink taxonomy, session taint,
+  and the flow rule at the chokepoint. `Escalate` plus out-of-band
+  `penstock approve <class>`. Measured: `./demo/run_metrics.sh` → `METRICS.md`.
+  Still open from this phase: **value fingerprinting** (evidence quality, not the
+  guarantee) and **mid-session pin re-check** on every client `tools/list`.
 - **Phase 2 — Numbers.** AgentDojo adapter; paired attack-success and
   task-utility figures published honestly, even if mediocre. This is what turns
   "structural beats signature-based" from an assertion into a result.
@@ -34,31 +35,43 @@ Everything else — signed receipts, fuzzing, more upstream servers, protocol
 breadth — is polish on a thesis that is not yet demonstrated. Resist it until
 Phase 1 lands.
 - **Two enforcement points.** (1) The call chokepoint: `PenstockProxy::call_tool`
-  runs `invariants.assess()` → `ledger.record_call()` → route; Phase 1 rules slot
-  in here. `evaluate()` is the client-clean projection of `assess()`. (2) Connect
-  time: `Registry::connect` pin-checks each upstream's tools and withholds mutated
-  ones from the served set before anything is exposed.
+  runs `invariants.assess()` (§3, compiled-in, always first) → `flow.assess()`
+  (R3) → route → taint-if-untrusted. (2) Connect time: `Registry::connect`
+  pin-checks each upstream's tools and withholds mutated ones before exposure.
+- **The taint guard is held across the whole mediated call**, which serialises
+  them. This is load-bearing, not incidental: MCP clients dispatch concurrently,
+  and without it a sink can be judged *before* an in-flight untrusted read taints
+  the session. Do not "optimise" it away. Residual: arrival order is still
+  client-determined — see SECURITY.md.
+- **Two decision types, deliberately.** `InvariantOutcome` (Allow/Deny) is what
+  §3 returns; `Decision` (Allow/Deny/Escalate) is the flow vocabulary. An
+  invariant *cannot* escalate — it is a compile error, not a convention. Widening
+  goes one way via `From`. Both stay exhaustive so a new outcome breaks every
+  match site instead of falling through a wildcard into "allow".
 - **Modules & dependency direction** (leaves at the bottom; no lateral imports):
   `paths` (path resolution + `penstock_home()`), `config` (`penstock.toml`), and
-  `decision` (`Decision`/`Assessment` vocabulary), and `pin` (pin store +
-  canonical-definition diffing) are leaves; `invariant` (§3 gate) and `ledger`
-  (append-only JSONL) depend only on leaves; `upstream` (`Registry`, routing,
-  `CallError`, pinning) depends on `config` + `pin`; `proxy` composes everything
-  and owns the chokepoint. `invariant`, `ledger`, and `upstream` must not import
-  each other. `bin/mock_upstream` and `examples/demo_session` are network-free
-  fixtures.
+  `decision` (outcome vocabulary), `pin` (pin store + canonical diffing),
+  `session` (taint state), `sink` (sink taxonomy + matching) and `approval`
+  (operator acks) are leaves; `config` depends on `sink`; `invariant` (§3 gate),
+  `ledger` and `flow` (the R3 rule) depend only on leaves; `upstream`
+  (`Registry`, routing, pinning, trust) depends on `config` + `pin`; `proxy`
+  composes everything and owns the chokepoint. `invariant`, `ledger`, `flow` and
+  `upstream` must not import each other. `bin/mock_upstream`, `bin/mock_sink`
+  and the `examples/` sessions are network-free fixtures.
 - **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
   `upstream.rs` rather than re-deriving; read crate source in the registry cache
   before using an unverified API.
 - **Live checks / demos** (each asserts its own property and exits non-zero if it
   regresses — treat them as tests, not narration):
-  `./demo/run.sh` (allow, self-protection deny, ledger) and
-  `./demo/run_rugpull.sh` (pin → mutate → withhold → repin) are hermetic, need
-  only the Rust toolchain, and gate CI.
-  `./demo/run_selfprotect_real.sh` runs the same self-protection proof against the
-  real filesystem MCP server with `PENSTOCK_HOME` inside the server's allowed
-  directory; it needs Node, so CI runs it non-blocking. It is the strongest
-  evidence the project has — keep it working.
+  `./demo/run_flow_block.sh` is **the headline**: cross-server exfiltration
+  blocked against the real filesystem MCP server. `./demo/run_selfprotect_real.sh`
+  proves self-protection against that same real server. Both need Node, so CI
+  runs them non-blocking.
+  `./demo/run.sh`, `./demo/run_rugpull.sh` and `./demo/run_metrics.sh` are
+  hermetic, need only Rust, and gate CI.
+- **Driving demos:** always drive sequentially, awaiting each response, like a
+  real agent. Piping several JSON-RPC requests at once races the taint window and
+  produces false passes — this bit twice during Phase 1.
 
 ## Architecture rules
 
