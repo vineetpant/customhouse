@@ -11,10 +11,11 @@ pub mod ledger;
 pub mod paths;
 pub mod pin;
 pub mod proxy;
+pub mod session;
 pub mod upstream;
 
 pub use config::Config;
-pub use decision::{Assessment, Decision};
+pub use decision::{Assessment, Decision, InvariantOutcome};
 pub use invariant::Invariants;
 pub use ledger::Ledger;
 pub use pin::PinStore;

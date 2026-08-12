@@ -24,9 +24,9 @@
 //! Does NOT catch (documented, not hidden): bare filenames with no separator,
 //! paths hidden inside encoded/base64 blobs (that is §7.4, Phase 1), exec/shell
 //! string arguments (I3 → Escalate, Phase 1), and any argument whose path-ness
-//! is only knowable from the server's schema. The shared [`crate::decision::Decision`]
-//! is Allow/Deny only for now; `Escalate` arrives with the tiered policy engine
-//! in Phase 1.
+//! is only knowable from the server's schema. This layer returns
+//! [`crate::decision::InvariantOutcome`] — allow or deny, never escalate: an
+//! invariant an operator can be talked into waiving is not an invariant.
 //!
 //! Also not caught, because the check is path-based: **inode aliases**. Resolution
 //! follows symlinks, but a hardlink to a protected file — or a bind mount of the
@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use rmcp::model::CallToolRequestParams;
 use serde_json::Value;
 
-use crate::decision::{Assessment, Decision};
+use crate::decision::{Assessment, InvariantOutcome};
 use crate::paths::{penstock_home, resolve_path, resolve_target};
 
 /// Client-facing denial reason. Deliberately generic: it names no path, so a
@@ -110,7 +110,7 @@ impl Invariants {
             let resolved = resolve_target(raw);
             if self.is_protected(&resolved) {
                 return Assessment {
-                    decision: Decision::Deny {
+                    outcome: InvariantOutcome::Deny {
                         reason: DENY_REASON.to_string(),
                     },
                     matched_path: Some(resolved),
@@ -120,10 +120,14 @@ impl Invariants {
         Assessment::allow()
     }
 
-    /// Client-facing projection of `assess`: the `Decision` only, never the
-    /// matched path. Callers on the client-error path use this.
-    pub fn evaluate(&self, request: &CallToolRequestParams) -> Decision {
-        self.assess(request).decision
+    /// Client-facing projection of `assess`: the outcome only, never the matched
+    /// path. Callers on the client-error path use this.
+    ///
+    /// Returns [`InvariantOutcome`], not [`crate::decision::Decision`]: the §3
+    /// invariants can allow or deny and nothing else. Escalation is not theirs
+    /// to offer.
+    pub fn evaluate(&self, request: &CallToolRequestParams) -> InvariantOutcome {
+        self.assess(request).outcome
     }
 
     /// True if `resolved` is one of, or lives inside, a protected root. Uses
@@ -176,8 +180,8 @@ mod tests {
         CallToolRequestParams::new("fs__write").with_arguments(arguments)
     }
 
-    fn is_deny(decision: Decision) -> bool {
-        matches!(decision, Decision::Deny { .. })
+    fn is_deny(outcome: InvariantOutcome) -> bool {
+        matches!(outcome, InvariantOutcome::Deny { .. })
     }
 
     fn path_str(path: PathBuf) -> String {
@@ -236,7 +240,7 @@ mod tests {
         let target = path_str(elsewhere.path().join("data.txt"));
         assert_eq!(
             invariants.evaluate(&call_with_path(&target)),
-            Decision::Allow
+            InvariantOutcome::Allow
         );
     }
 
@@ -253,7 +257,7 @@ mod tests {
         let target = path_str(sibling.join("data.txt"));
         assert_eq!(
             invariants.evaluate(&call_with_path(&target)),
-            Decision::Allow
+            InvariantOutcome::Allow
         );
     }
 
@@ -267,7 +271,7 @@ mod tests {
             Value::String("hello through penstock".into()),
         );
         let request = CallToolRequestParams::new("mock__echo").with_arguments(arguments);
-        assert_eq!(invariants.evaluate(&request), Decision::Allow);
+        assert_eq!(invariants.evaluate(&request), InvariantOutcome::Allow);
     }
 
     #[test]
@@ -275,7 +279,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let invariants = Invariants::from_roots(vec![home.path().to_path_buf()]);
         let request = CallToolRequestParams::new("mock__echo");
-        assert_eq!(invariants.evaluate(&request), Decision::Allow);
+        assert_eq!(invariants.evaluate(&request), InvariantOutcome::Allow);
     }
 
     // The cases below lock behaviour that the gate already has but nothing

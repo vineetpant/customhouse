@@ -411,7 +411,7 @@ mod tests {
             rmcp::model::CallToolRequestParams::new("fs__read").with_arguments(args);
         assert!(matches!(
             invariants.evaluate(&read_the_store),
-            crate::decision::Decision::Deny { .. }
+            crate::decision::InvariantOutcome::Deny { .. }
         ));
     }
 }

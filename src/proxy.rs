@@ -28,7 +28,7 @@ use rmcp::{
 };
 
 use crate::config::Config;
-use crate::decision::Decision;
+use crate::decision::InvariantOutcome;
 use crate::invariant::Invariants;
 use crate::ledger::Ledger;
 use crate::pin::PinStore;
@@ -177,7 +177,7 @@ impl ServerHandler for PenstockProxy {
         let assessment = self.invariants.assess(&request);
         let server = self.registry.server_of(&tool);
         self.ledger.record_call(&request, server, &assessment);
-        if let Decision::Deny { reason } = assessment.decision {
+        if let InvariantOutcome::Deny { reason } = assessment.outcome {
             eprintln!("penstock: self-protection denied tool `{tool}`");
             return Err(McpError::invalid_params(reason, None));
         }

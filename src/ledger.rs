@@ -27,7 +27,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use rmcp::model::CallToolRequestParams;
 use serde::{Deserialize, Serialize};
 
-use crate::decision::{Assessment, Decision};
+use crate::decision::{Assessment, InvariantOutcome};
 use crate::paths::penstock_home;
 use crate::pin::PinOutcome;
 
@@ -98,9 +98,9 @@ impl Ledger {
         server: Option<&str>,
         assessment: &Assessment,
     ) {
-        let (decision, detail) = match &assessment.decision {
-            Decision::Allow => (LedgerDecision::Allow, None),
-            Decision::Deny { .. } => (
+        let (decision, detail) = match &assessment.outcome {
+            InvariantOutcome::Allow => (LedgerDecision::Allow, None),
+            InvariantOutcome::Deny { .. } => (
                 LedgerDecision::Deny,
                 assessment
                     .matched_path
@@ -265,14 +265,14 @@ mod tests {
 
     fn allow() -> Assessment {
         Assessment {
-            decision: Decision::Allow,
+            outcome: InvariantOutcome::Allow,
             matched_path: None,
         }
     }
 
     fn deny(path: &str) -> Assessment {
         Assessment {
-            decision: Decision::Deny {
+            outcome: InvariantOutcome::Deny {
                 reason: "denied".into(),
             },
             matched_path: Some(PathBuf::from(path)),
@@ -343,7 +343,10 @@ mod tests {
         let target = ledger.path().to_str().unwrap();
         let read_the_ledger = call("fs__read", Some(target));
         assert!(
-            matches!(invariants.evaluate(&read_the_ledger), Decision::Deny { .. }),
+            matches!(
+                invariants.evaluate(&read_the_ledger),
+                InvariantOutcome::Deny { .. }
+            ),
             "a mediated read of the ledger path must be denied (I-5)"
         );
     }
