@@ -6,12 +6,14 @@
 
 pub mod config;
 pub mod decision;
+pub mod flow;
 pub mod invariant;
 pub mod ledger;
 pub mod paths;
 pub mod pin;
 pub mod proxy;
 pub mod session;
+pub mod sink;
 pub mod upstream;
 
 pub use config::Config;

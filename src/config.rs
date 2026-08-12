@@ -7,6 +7,8 @@
 use serde::Deserialize;
 use std::path::Path;
 
+use crate::sink::{SinkClass, SinkRule};
+
 /// The separator between an upstream's name and a tool's own name in the
 /// namespaced identifier Penstock exposes to the client (`web__fetch`). Upstream
 /// names may not contain it, so routing can split on the first occurrence.
@@ -19,6 +21,13 @@ pub struct Config {
     /// One entry per upstream MCP server, written as `[[upstream]]` tables.
     #[serde(default, rename = "upstream")]
     pub upstreams: Vec<UpstreamConfig>,
+    /// Operator sink classifications, written as `[[sink]]` tables. These take
+    /// precedence over the built-in map in [`crate::sink`].
+    #[serde(default, rename = "sink")]
+    pub sinks: Vec<SinkRule>,
+    /// Per-sink-class enforcement modes, written as a `[flow]` table.
+    #[serde(default)]
+    pub flow: FlowConfig,
 }
 
 /// How to launch and identify a single upstream MCP server.
@@ -32,6 +41,68 @@ pub struct UpstreamConfig {
     /// Arguments passed to `command`.
     #[serde(default)]
     pub args: Vec<String>,
+    /// Whether results from this server may be treated as trusted input.
+    /// Defaults to untrusted: an operator must positively assert trust, so
+    /// forgetting to classify a server fails safe rather than silently
+    /// admitting its content as clean.
+    #[serde(default)]
+    pub trust: TrustClass,
+}
+
+/// Whether content returned by an upstream is trusted input.
+///
+/// Default-deny attribution (§7.1): content is untrusted unless positively
+/// attributed to a trusted origin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrustClass {
+    /// Results may enter the session without tainting it.
+    Trusted,
+    /// Results taint the session when returned to the client.
+    #[default]
+    Untrusted,
+}
+
+impl TrustClass {
+    pub fn is_untrusted(&self) -> bool {
+        matches!(self, TrustClass::Untrusted)
+    }
+}
+
+/// What Penstock does when a tainted session reaches a sink, per sink class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SinkMode {
+    /// Refuse outright. The default: a deterministic block is the guarantee
+    /// this design is built to make.
+    #[default]
+    Deny,
+    /// Refuse, but tell the operator how to approve a retry. Intended for sink
+    /// classes where measured false positives make a hard block impractical.
+    RequireApproval,
+}
+
+/// Enforcement mode per sink class. Every class defaults to `deny`.
+#[derive(Debug, Clone, Copy, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FlowConfig {
+    #[serde(default)]
+    pub payment_transfer: SinkMode,
+    #[serde(default)]
+    pub external_send: SinkMode,
+    #[serde(default)]
+    pub data_egress: SinkMode,
+}
+
+impl FlowConfig {
+    /// The configured mode for a sink class.
+    pub fn mode_for(&self, class: SinkClass) -> SinkMode {
+        match class {
+            SinkClass::PaymentTransfer => self.payment_transfer,
+            SinkClass::ExternalSend => self.external_send,
+            SinkClass::DataEgress => self.data_egress,
+        }
+    }
 }
 
 /// Reasons a configuration is rejected. Penstock fails closed on any of them.
@@ -159,6 +230,83 @@ mod tests {
             "#,
         );
         assert!(matches!(result, Err(ConfigError::EmptyName)));
+    }
+
+    #[test]
+    fn an_unclassified_upstream_defaults_to_untrusted() {
+        // Forgetting to classify a server must fail safe. If this ever flips,
+        // an operator who adds a server and forgets `trust` silently admits its
+        // content as clean, and the whole flow rule stops meaning anything.
+        let config = Config::from_toml_str(
+            r#"
+            [[upstream]]
+            name = "web"
+            command = "web-server"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.upstreams[0].trust, TrustClass::Untrusted);
+        assert!(config.upstreams[0].trust.is_untrusted());
+    }
+
+    #[test]
+    fn trust_can_be_asserted_explicitly() {
+        let config = Config::from_toml_str(
+            r#"
+            [[upstream]]
+            name = "internal"
+            command = "internal-server"
+            trust = "trusted"
+            "#,
+        )
+        .unwrap();
+        assert_eq!(config.upstreams[0].trust, TrustClass::Trusted);
+        assert!(!config.upstreams[0].trust.is_untrusted());
+    }
+
+    #[test]
+    fn sink_modes_default_to_deny_for_every_class() {
+        let config = Config::from_toml_str("").unwrap();
+        for class in [
+            SinkClass::PaymentTransfer,
+            SinkClass::ExternalSend,
+            SinkClass::DataEgress,
+        ] {
+            assert_eq!(
+                config.flow.mode_for(class),
+                SinkMode::Deny,
+                "{} must default to deny",
+                class.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn sink_rules_and_modes_parse() {
+        let config = Config::from_toml_str(
+            r#"
+            [[sink]]
+            pattern = "dispatch_*"
+            class = "external_send"
+
+            [flow]
+            external_send = "require_approval"
+            "#,
+        )
+        .unwrap();
+
+        assert_eq!(config.sinks.len(), 1);
+        assert_eq!(config.sinks[0].pattern, "dispatch_*");
+        assert_eq!(config.sinks[0].class, SinkClass::ExternalSend);
+        assert_eq!(
+            config.flow.mode_for(SinkClass::ExternalSend),
+            SinkMode::RequireApproval
+        );
+        assert_eq!(
+            config.flow.mode_for(SinkClass::PaymentTransfer),
+            SinkMode::Deny,
+            "unset classes keep the safe default"
+        );
     }
 
     #[test]
