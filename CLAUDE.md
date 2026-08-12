@@ -31,9 +31,10 @@ Penstock is a deterministic reference monitor for the MCP tool boundary: an aggr
   "structural beats signature-based" from an assertion into a result.
 - **Phase 3 — Capability profiles (R2)** and footprint/regression diffing.
 
-Everything else — signed receipts, fuzzing, more upstream servers, protocol
-breadth — is polish on a thesis that is not yet demonstrated. Resist it until
-Phase 1 lands.
+The thesis is now demonstrated, so the next work is proving it at scale
+(Phase 2) rather than broadening surface. Signed receipts, fuzzing, protocol
+breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
+
 - **Two enforcement points.** (1) The call chokepoint: `PenstockProxy::call_tool`
   runs `invariants.assess()` (§3, compiled-in, always first) → `flow.assess()`
   (R3) → route → taint-if-untrusted. (2) Connect time: `Registry::connect`
@@ -101,11 +102,12 @@ Phase 1 lands.
 ## Rust design guidelines (hold the line — the codebase is structured this way)
 
 - **Module dependency direction is acyclic and points at leaves.** Leaves
-  (`paths`, `config`, `decision`) import nothing from the crate; policy/record
-  modules (`invariant`, `ledger`) depend only on leaves; `proxy` is the
-  composition root. `invariant`/`ledger`/`upstream` must never import each other
-  in production code — if two need a thing, it belongs in a leaf they both depend
-  on (that is why `penstock_home` lives in `paths` and `Decision` in `decision`).
+  (`paths`, `decision`, `session`, `sink`, `pin`, `approval`) import nothing from
+  the crate; `config` depends only on `sink`; policy/record modules (`invariant`,
+  `ledger`, `flow`) depend only on leaves; `proxy` is the composition root.
+  `invariant`/`ledger`/`flow`/`upstream` must never import each other in
+  production code — if two need a thing, it belongs in a leaf they both depend on
+  (that is why `penstock_home` lives in `paths` and `Decision` in `decision`).
   Exception: `#[cfg(test)]` may cross laterally when the cross-module property
   *is* the test — the I-5 drift test in `ledger` imports `Invariants` by design;
   do not "fix" it.
