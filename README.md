@@ -11,6 +11,21 @@ untrusted content. No model sits in the decision path, and no payload is ever
 pattern-matched — the block follows from provenance alone, so it cannot be
 evaded by rewording, summarising or base64-ing the payload.
 
+> **v0.2.0 is a working reference monitor with measured results — use it
+> locally, read the numbers, break it. It is not yet a production exfiltration
+> guarantee, and [`SECURITY.md`](./SECURITY.md) says exactly where the line is.**
+
+**What you can use it for today:** put it in front of the MCP servers your client
+already talks to and get one endpoint aggregating all of them, rug-pull
+protection (a server that swaps a tool definition is withheld until you
+`repin`), an append-only ledger of every tool call your agent makes, and
+deny-by-default flow enforcement on payment, egress and external-send sinks. It
+suits agents whose sink calls are occasional — a transfer, an upload, a send —
+where a prompt on an untrusted-touched flow is worth having. It does **not** suit
+high-frequency untrusted-to-sink automation such as support-reply pipelines; the
+measured cost of that is [in the numbers](#the-numbers-including-the-bad-one),
+and the fix for it is on the roadmap.
+
 ## The demo a single-server gateway cannot produce
 
 An agent reads a poisoned file through the **real** MCP filesystem server, then
