@@ -187,15 +187,39 @@ cargo test
 Point Penstock at your MCP servers with a `penstock.toml`:
 
 ```toml
+# Every upstream declares whether its results may be treated as trusted input.
+# Omitting `trust` means untrusted — forgetting to classify a server fails safe.
 [[upstream]]
 name = "web"                     # namespaces its tools as web__*
 command = "/path/to/web-mcp-server"
 args = ["--stdio"]
+trust = "untrusted"              # anything from the open internet
 
 [[upstream]]
 name = "mail"
 command = "/path/to/mail-mcp-server"
+trust = "trusted"                # your own server; its results do not taint
+
+# Enforcement mode per sink class. These are the measured defaults from
+# METRICS.md: money movement produced no false positives so it can bear a hard
+# block, while sending and uploading need an approval path or they will block
+# real work.
+[flow]
+payment_transfer = "deny"
+external_send    = "require_approval"
+data_egress      = "require_approval"
+
+# Optional: classify tools the built-in map does not know about.
+[[sink]]
+pattern = "dispatch_*"
+class = "external_send"
 ```
+
+When a class is set to `require_approval`, a blocked call is refused with
+instructions rather than held open. An operator runs `penstock approve
+external_send` in a terminal; that authorises **one** retry, expires after ten
+minutes, and cannot be granted by the agent — the approval store lives inside the
+directory Penstock's self-protection defends.
 
 Then point your MCP client at Penstock instead of at those servers directly:
 

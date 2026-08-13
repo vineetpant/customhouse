@@ -59,3 +59,19 @@ external_send = "require_approval"
 data_egress = "require_approval"
 ```
 
+
+## Post-mortem: the four false positives
+
+The headline number is easy to misread as "this approach is wrong 40% of the time". It is not. In **every** blocked benign workflow, untrusted data genuinely does reach the sink — Penstock is correct about the flow. What makes these workflows legitimate is not the absence of a flow, it is the *destination*: a reply goes back to the person who wrote the ticket, a summary goes to an internal channel, a processed file goes to the organisation's own bucket.
+
+That has a direct consequence for the roadmap, and it is not the one we assumed. **Value fingerprinting would mostly confirm these blocks rather than clear them**, because the data really is flowing. The mechanism that would actually recover them is destination classification — the "recipient not seen in this session's trusted inputs" idea in the design's sink tiering. Fingerprinting remains worth building for *evidence quality* ("these arguments contain that read" reads very differently in an audit from "this session saw something untrusted"), but it is not the false-positive fix.
+
+| Workflow | Class | Untrusted data in sink args? | Fingerprinting | Approval as UX |
+| --- | --- | --- | --- | --- |
+| `support-reply` | `external_send` | Yes — the reply quotes and answers the customer's own text. | Confirms, does not clear. The flow is real. | Poor. Every ticket reply would prompt; an agent doing support at volume would be unusable. |
+| `summarise-page-to-chat` | `external_send` | Yes semantically; the summary is derived from the page, though reworded. | Might clear it by missing the paraphrase — but that is exactly the transformation an attacker uses, so treating a fingerprint miss as safe would be unsound. | Acceptable. Summarising is deliberate and low-frequency. |
+| `process-uploaded-csv` | `data_egress` | Yes — the uploaded artefact is the untrusted data, processed. | Confirms, does not clear. | Acceptable. Batch work, low frequency. |
+| `triage-issue-and-notify` | `external_send` | Yes — the notification carries issue text. | Confirms, does not clear. | Borderline. Tolerable at low issue volume, painful at high. |
+
+Read together: session-scoped granularity costs roughly four in ten benign sink workflows an approval prompt. For low-frequency work that is a reasonable price for a guarantee that cannot be evaded by rewording the payload. For high-volume work such as support replies it is not, and the answer there is destination classification rather than a looser rule.
+

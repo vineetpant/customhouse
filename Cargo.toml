@@ -1,13 +1,13 @@
 [package]
 name = "penstock"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.92"
 license = "Apache-2.0"
-# Describes what this release actually does. The flow-enforcement rule (untrusted
-# input must not reach a sensitive sink) is Phase 1 and deliberately not claimed
-# here — see SECURITY.md.
-description = "Deterministic reference monitor for the MCP tool boundary: an aggregating proxy with compiled-in self-protection, tool-definition pinning against rug pulls, and an append-only audit ledger."
+# Describes what this release actually does. Scope limits — session-scoped
+# granularity, the measured false-positive cost — are in SECURITY.md and
+# METRICS.md rather than softened away here.
+description = "Deterministic reference monitor for the MCP tool boundary: blocks money-moving and data-egress tool calls in any agent session that has received untrusted content, with no model in the decision path."
 repository = "https://github.com/vineetpant/penstock"
 readme = "README.md"
 keywords = ["mcp", "security", "ai-agents", "prompt-injection", "proxy"]
