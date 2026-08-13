@@ -16,7 +16,7 @@ jobs:
     name: test, lint, hermetic demos
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Toolchain versions
         run: rustc --version && cargo --version
@@ -39,14 +39,25 @@ jobs:
       - name: Demo — rug-pull withheld until re-pinned
         run: ./demo/run_rugpull.sh
 
+      # Regenerates METRICS.md. Failing here means the measured block rate or
+      # false-positive rate moved, which is a change worth noticing.
+      - name: Metrics — block rate and false-positive rate
+        run: ./demo/run_metrics.sh
+
   real-server:
-    name: self-protection vs a real MCP server
+    name: real-server demos
     runs-on: ubuntu-latest
     # Separated from the gate above because it fetches the upstream server from
     # npm: a registry outage should not be reported as a security regression.
     # It still runs on every push, and its failure is visible.
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
-      - name: Run against @modelcontextprotocol/server-filesystem
+      - uses: actions/checkout@v5
+      # The headline claim. If this stops blocking, the project's whole thesis
+      # has regressed, so it must run on every push even though npm flakiness
+      # keeps it out of the blocking gate.
+      - name: Demo — cross-server exfiltration blocked
+        run: ./demo/run_flow_block.sh
+
+      - name: Demo — self-protection vs a real MCP server
         run: ./demo/run_selfprotect_real.sh
