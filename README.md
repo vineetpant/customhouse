@@ -143,36 +143,38 @@ it was meant to be removed. It also means decisions are reproducible, auditable,
 and testable, which is why the enforcement path is exercised by unit tests, a
 measured scenario suite, and four self-asserting demos rather than by vibes.
 
-## Prior art, and what is different here
+## How this differs from other MCP proxies
 
-Penstock is not the first attempt to put a control point between an agent and
-its tools.
-
+Putting a control point between an agent and its tools is not a new idea —
 [pipelock](https://github.com/luckyPipewrench/pipelock),
 [ressl/mcp-firewall](https://github.com/ressl/mcp-firewall) and
-[preloop](https://github.com/preloop/preloop) occupy adjacent ground. Where
-designs converge, that is a sign the problem is real.
+[preloop](https://github.com/preloop/preloop) all occupy adjacent ground. Where
+designs converge, that is a sign the problem is real. Three things here are
+genuinely different:
 
-Three things are genuinely different here, and each has a cost:
+**Structural, not signature-based.** The common approach detects badness *in
+content*, with maintained pattern lists — injection signatures, DLP regexes.
+Penstock never inspects what content says. Decisions rest on provenance: where
+data came from, where it is going, whether a definition changed since you
+approved it. A signature list must be updated forever and still misses the
+attack nobody has written a rule for yet; provenance does not care how the
+payload is worded, encoded or summarised.
 
-- **Structural, not signature-based.** Every tool above detects badness *in
-  content* via maintained pattern lists — 32 injection patterns here, 50+ there,
-  65 DLP signatures. Penstock refuses that approach entirely. Nothing judges what
-  content *says*; decisions rest on provenance and integrity — where data came
-  from, where it is going, whether a definition changed. **The cost:** signatures
-  catch known payloads that structure alone may wave through. This is a genuine
-  disagreement about how agent security should work, and Phase 2's benchmarks
-  exist to settle it with numbers rather than argument.
-- **Aggregating, not per-server.** Those proxies wrap one upstream per instance.
-  A cross-server flow — read through one server, exfiltrate through another — is
-  structurally invisible to that placement. One chokepoint can see it. **The
-  cost:** a single point of failure, and every server behind one config.
-- **Fully Apache-2.0.** No open-core tier, no license key, no source-available
-  enterprise split. For something sitting in the enforcement path, "you can read
-  and fork all of it" is a security property. **The cost:** no commercial
-  engine behind it.
+**Aggregating, not per-server.** Penstock sits in front of *all* your MCP
+servers at once. That is what makes the cross-server block above possible: the
+poisoned read and the attempted send happen on different upstreams, and a proxy
+wrapping a single server only ever sees its own half of that flow.
 
-All three are argued, with their trade-offs, in [`DESIGN-v2.md`](./DESIGN-v2.md).
+**Deterministic, and fully Apache-2.0.** No model in the decision path, so
+verdicts are reproducible and testable — the enforcement logic is covered by 84
+unit tests, a measured scenario suite, and five demos that assert their own
+security properties. No open-core tier, no license key, no source-available
+split: for something sitting in your enforcement path, being able to read and
+fork all of it is a security property.
+
+Where Penstock is deliberately narrow, and what it does not yet protect against,
+is set out in [`SECURITY.md`](./SECURITY.md) rather than left for you to
+discover.
 
 ## Install
 

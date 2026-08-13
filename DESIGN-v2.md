@@ -315,7 +315,7 @@ A blocked call waiting on human approval races the client's tool timeout (common
 
 ## 15. Prior art and competitive position (added after v0.1.0; landscape survey)
 
-v1 was designed without surveying the field, on the assumption that the category was thin. **It is not.** A survey conducted after Phase 0 shipped found several projects occupying adjacent ground. Recording that here, because a design document that ignores its neighbours is worthless as an engineering artifact.
+v1 was designed without surveying the field, on the assumption that the category was thin. **It is not.** A survey after Phase 0 found several projects occupying adjacent ground. Recording it here because a design document that ignores its neighbours is worthless as an engineering artifact — and because the differences below are design decisions, not accidents.
 
 | Project | Shape | Notes |
 | --- | --- | --- |
