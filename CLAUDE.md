@@ -76,7 +76,7 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
 
 ## Architecture rules
 
-- **Aggregating proxy, not a sidecar.** One chokepoint presenting as a single MCP server, multiplexing N upstreams — only it sees cross-server flows (read via web, exfil via mail). Per-server sidecars structurally cannot.
+- **Aggregating proxy, not a sidecar.** One chokepoint presenting as a single MCP server, multiplexing N upstreams, so a cross-server flow (read via web, exfil via mail) is visible in one place. A per-server guard sees only its own half, so the same coverage otherwise requires sharing state between components — aggregation is the option with least coordination, not the only reachable one.
 - **§3 self-protection invariants (I1–I5) are compiled into the binary and evaluated before any policy rule** — not expressible or removable in config. Path checks run on the canonicalized path, not the raw argument.
 - **The ledger is append-only from the proxy side and unreadable via any mediated path** (reading it re-injects the tainted strings it records).
 - **Deterministic rules only. Never pattern-match for "injection-looking" text.** Control is pinning + mutation-blocking + operator visibility, never regex guesswork.
@@ -133,6 +133,30 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
   should be testable without spawning a process.
 - **New dependency or newtype requires a one-line "considered and rejected"
   rationale** in the commit or code — dep-minimalism is a security property here.
+
+## Writing and positioning rules
+
+These govern README, SECURITY.md, DESIGN, release notes and any public copy.
+
+- **Never write our own product down.** Do not rank it below alternatives, do not
+  route readers elsewhere, do not hedge the claim into meaninglessness. Honesty
+  about *our own limits* (SECURITY.md, the measured false-positive rate) is a
+  different thing and stays blunt — that is a spec, not an apology.
+- **Never write another product down either.** No disparagement, no implied
+  deficiency, no "unlike X which fails to…". Name neighbours factually or not at
+  all. We do not know their codebases, their roadmaps, or their reasons.
+- **No claim of uniqueness or superiority without evidence in hand.** "First",
+  "only", "nobody else", "structurally cannot" require something verifiable —
+  a quote from their docs, a measurement, a reproducible test. If it cannot be
+  cited, it does not go in. Inferring capability from a CLI example is not
+  evidence; that mistake produced a false "single-server proxies structurally
+  cannot do this" claim that their own docs disprove.
+- **Prefer claims about what we did over claims about what others didn't.** "We
+  publish a block rate and a false-positive rate" is verifiable and needs no
+  comparison. "We are the only ones who do" needs proof we cannot fully have.
+- **Assume the category is real and contested, not empty.** Market validation
+  comes from users, not from our own assessment of our design. Until there is
+  adoption evidence, describe the product, not its standing.
 
 ## Commit conventions
 

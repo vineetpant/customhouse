@@ -26,12 +26,12 @@ high-frequency untrusted-to-sink automation such as support-reply pipelines; the
 measured cost of that is [in the numbers](#the-numbers-including-the-bad-one),
 and the fix for it is on the roadmap.
 
-## The demo a single-server gateway cannot produce
+## Watch it block a real attack
 
 An agent reads a poisoned file through the **real** MCP filesystem server, then
-tries to email it out through a **different** server. The read and the send live
-on separate upstreams — a proxy that wraps one server never sees both halves of
-that flow. Customhouse aggregates them, so it does.
+tries to email the contents out through a **different** server. Customhouse sits
+in front of both, so it sees the whole flow: the read that brought untrusted
+content in, and the send that would take data out.
 
 ```sh
 ./demo/run_flow_block.sh
@@ -146,8 +146,10 @@ server and multiplexes N upstreams behind it, namespacing their tools
 (`web__fetch`, `mail__send`). That shape is the design's central bet. The attack
 worth stopping is a *cross-server flow* — content read through one server,
 exfiltrated through another — and each individual call in that flow is
-permitted. A per-server sidecar structurally cannot see the flow, because it only
-ever sees its own half. One chokepoint can.
+permitted. A guard placed in front of a single server sees only its own half of
+that flow, so correlating the two requires either one component that sees both —
+the choice made here — or passing state between components. Aggregation is the
+option with fewer moving parts in the enforcement path.
 
 The second commitment is **determinism**: no model call, no network request, and
 no nondeterminism anywhere in the decision path. Policy evaluation is a pure
@@ -175,10 +177,11 @@ approved it. A signature list must be updated forever and still misses the
 attack nobody has written a rule for yet; provenance does not care how the
 payload is worded, encoded or summarised.
 
-**Aggregating, not per-server.** Customhouse sits in front of *all* your MCP
-servers at once. That is what makes the cross-server block above possible: the
-poisoned read and the attempted send happen on different upstreams, and a proxy
-wrapping a single server only ever sees its own half of that flow.
+**Aggregating by default.** Customhouse fronts all your MCP servers in one
+process, so a flow that crosses between them — read here, send there — is
+visible without any coordination: no shared state to synchronise, no metadata
+passed between instances, no trust to establish between components. One config,
+one place where the decision happens.
 
 **Deterministic, and fully Apache-2.0.** No model in the decision path, so
 verdicts are reproducible and testable — the enforcement logic is covered by 84

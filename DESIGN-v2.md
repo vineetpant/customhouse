@@ -76,7 +76,7 @@
      (upstream MCP servers)
 ```
 
-**Customhouse is an aggregating proxy** — it presents as a single MCP server and multiplexes N upstreams. The attack is a *cross-server* flow (read via web server, exfiltrate via mail server); a per-server sidecar structurally cannot see it. Only a single chokepoint satisfies complete mediation.
+**Customhouse is an aggregating proxy** — it presents as a single MCP server and multiplexes N upstreams. The attack is a *cross-server* flow (read via web server, exfiltrate via mail server). A guard in front of a single server observes only its own half, so seeing the whole flow requires either one component that observes both — the choice taken here — or sharing state between per-server components. Aggregation buys complete mediation with the least coordination.
 
 Consequences: upstream-namespaced tool names (`web__fetch`, `mail__send`), merged/rewritten/cached `tools/list`, wrapped (never swallowed) upstream errors.
 
@@ -330,7 +330,7 @@ v1 was designed without surveying the field, on the assumption that the category
 **The three claims that remain genuinely differentiating:**
 
 1. **Structural, not signature-based.** Every tool surveyed detects badness *in content* via maintained pattern lists (32 injection patterns here, 50+ there, 65 DLP signatures). This design refuses that entirely (§12), enforcing on provenance and integrity instead. This is the substantive disagreement in the category, and §11's Phase 2 benchmark exists to settle it with numbers rather than assertion.
-2. **Aggregating, not per-server.** The surveyed proxies wrap one upstream per instance. A cross-server flow — read through one server, exfiltrate through another — is structurally invisible to that placement (§2).
+2. **Aggregating placement.** Customhouse fronts every upstream in a single process, so a flow that crosses servers is visible without coordination between components. Comparable coverage is achievable by federating taint context between per-server instances; the difference is the amount of machinery in the enforcement path, not the reachable outcome (§2).
 3. **Fully Apache-2.0.** No open-core tier, no license key, no source-available enterprise split. For infrastructure that sits in the enforcement path, "you can read and fork all of it" is a security property, not a licensing preference.
 
 **Consequence for positioning:** Phase 0 is not a prelude to the interesting work. Two of the three most-cited MCP incident classes — the postmark-mcp trusted-server rug pull (§11 R1) and the Copilot self-disarm (§3) — are already blocked and demonstrable. The exfiltration case (R3) remains the honest gap, and remains the reason Phase 1 exists.
