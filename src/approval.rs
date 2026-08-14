@@ -5,8 +5,8 @@
 //!
 //! ## Deliberately minimal
 //!
-//! An approval is granted by running `penstock approve <sink-class>` in a
-//! terminal, which writes to `<penstock-home>/approvals.json`. The blocked call
+//! An approval is granted by running `customhouse approve <sink-class>` in a
+//! terminal, which writes to `<customhouse-home>/approvals.json`. The blocked call
 //! is **not** held open waiting for it: the client is refused and told what to
 //! approve, and may retry. Holding the call would require a pending-request
 //! queue, cancellation handling and client-timeout coordination for no security
@@ -19,7 +19,7 @@
 //! - **Expiry.** An unused approval goes stale after [`VALIDITY`], so walking
 //!   away from a terminal does not leave a sink permanently open.
 //!
-//! The store lives inside the Penstock home directory, so the §3 invariants
+//! The store lives inside the Customhouse home directory, so the §3 invariants
 //! already prevent a mediated call from granting its own approval — the agent
 //! cannot write the file that would unblock it. That is asserted by a test below.
 
@@ -29,7 +29,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::paths::penstock_home;
+use crate::paths::customhouse_home;
 use crate::sink::SinkClass;
 
 const APPROVAL_FILE: &str = "approvals.json";
@@ -74,9 +74,9 @@ pub struct ApprovalStore {
 }
 
 impl ApprovalStore {
-    /// Open the store at `<penstock-home>/approvals.json`.
+    /// Open the store at `<customhouse-home>/approvals.json`.
     pub fn open() -> Self {
-        Self::open_in(&penstock_home())
+        Self::open_in(&customhouse_home())
     }
 
     /// Open under an explicit home directory (tests supply a tempdir).
@@ -85,7 +85,7 @@ impl ApprovalStore {
     pub fn open_in(home: &Path) -> Self {
         let path = home.join(APPROVAL_FILE);
         let data = Self::load(&path).unwrap_or_else(|e| {
-            eprintln!("penstock: approval store unreadable, treating as empty: {e}");
+            eprintln!("customhouse: approval store unreadable, treating as empty: {e}");
             ApprovalData::default()
         });
         Self { path, data }

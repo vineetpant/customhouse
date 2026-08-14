@@ -1,25 +1,25 @@
-//! Penstock binary entry point.
+//! Customhouse binary entry point.
 //!
-//! `penstock serve [--config <path>]` runs the aggregating MCP proxy over stdio;
-//! `penstock repin <server>` accepts an upstream's current tool definitions.
+//! `customhouse serve [--config <path>]` runs the aggregating MCP proxy over stdio;
+//! `customhouse repin <server>` accepts an upstream's current tool definitions.
 //! stdout carries the MCP protocol; diagnostics go to stderr.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use penstock::approval::{self, ApprovalStore};
-use penstock::sink::SinkClass;
-use penstock::{Config, PinStore};
+use customhouse::approval::{self, ApprovalStore};
+use customhouse::sink::SinkClass;
+use customhouse::{Config, PinStore};
 
 /// Config file consulted when `--config` is not given, if it exists.
-const DEFAULT_CONFIG_PATH: &str = "penstock.toml";
+const DEFAULT_CONFIG_PATH: &str = "customhouse.toml";
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1);
 
     match args.next().as_deref() {
         Some("--version" | "-V") => {
-            println!("{} {}", penstock::name(), penstock::version());
+            println!("{} {}", customhouse::name(), customhouse::version());
             ExitCode::SUCCESS
         }
         Some("--help" | "-h") => {
@@ -30,14 +30,14 @@ fn main() -> ExitCode {
         Some("repin") => run_repin(args.collect()),
         Some("approve") => run_approve(args.collect()),
         Some(other) => {
-            eprintln!("penstock: unknown argument `{other}`");
+            eprintln!("customhouse: unknown argument `{other}`");
             print_usage();
             ExitCode::FAILURE
         }
     }
 }
 
-/// `penstock repin <server>` — forget a server's pins so its current tool
+/// `customhouse repin <server>` — forget a server's pins so its current tool
 /// definitions are accepted (re-pinned fresh) on the next `serve`. Deliberately
 /// minimal: it edits the pin store on disk and exits, a state change made
 /// outside the mediated surface. No interactive approval protocol.
@@ -45,12 +45,12 @@ fn run_repin(rest: Vec<String>) -> ExitCode {
     let server = match rest.as_slice() {
         [server] => server,
         [] => {
-            eprintln!("penstock: repin requires a server name");
+            eprintln!("customhouse: repin requires a server name");
             print_usage();
             return ExitCode::FAILURE;
         }
         _ => {
-            eprintln!("penstock: repin takes exactly one server name");
+            eprintln!("customhouse: repin takes exactly one server name");
             return ExitCode::FAILURE;
         }
     };
@@ -58,18 +58,18 @@ fn run_repin(rest: Vec<String>) -> ExitCode {
     let mut pins = PinStore::open();
     if !pins.forget_server(server) {
         // Not an error: nothing to accept is a perfectly fine outcome.
-        eprintln!("penstock: no pins found for server `{server}` (nothing to repin)");
+        eprintln!("customhouse: no pins found for server `{server}` (nothing to repin)");
         return ExitCode::SUCCESS;
     }
     match pins.save() {
         Ok(()) => {
             eprintln!(
-                "penstock: repinned `{server}` — its current definitions will be accepted on next serve"
+                "customhouse: repinned `{server}` — its current definitions will be accepted on next serve"
             );
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("penstock: failed to save pin store: {e}");
+            eprintln!("customhouse: failed to save pin store: {e}");
             ExitCode::FAILURE
         }
     }
@@ -79,7 +79,7 @@ fn run_serve(rest: Vec<String>) -> ExitCode {
     let (config, config_path) = match resolve_config(rest) {
         Ok(loaded) => loaded,
         Err(e) => {
-            eprintln!("penstock: {e}");
+            eprintln!("customhouse: {e}");
             return ExitCode::FAILURE;
         }
     };
@@ -87,15 +87,15 @@ fn run_serve(rest: Vec<String>) -> ExitCode {
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(e) => {
-            eprintln!("penstock: failed to start async runtime: {e}");
+            eprintln!("customhouse: failed to start async runtime: {e}");
             return ExitCode::FAILURE;
         }
     };
 
-    match runtime.block_on(penstock::serve_stdio(config, config_path.as_deref())) {
+    match runtime.block_on(customhouse::serve_stdio(config, config_path.as_deref())) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("penstock: {e}");
+            eprintln!("customhouse: {e}");
             ExitCode::FAILURE
         }
     }
@@ -131,7 +131,7 @@ fn resolve_config(rest: Vec<String>) -> Result<(Config, Option<PathBuf>), String
     Ok((config, path))
 }
 
-/// `penstock approve <sink-class>` — authorise one retry of a sink class that
+/// `customhouse approve <sink-class>` — authorise one retry of a sink class that
 /// flow policy escalated. Deliberately out-of-band: the agent cannot reach this
 /// command, and §3 stops it writing the store directly.
 fn run_approve(rest: Vec<String>) -> ExitCode {
@@ -144,12 +144,12 @@ fn run_approve(rest: Vec<String>) -> ExitCode {
     let name = match rest.as_slice() {
         [name] => name.clone(),
         _ => {
-            eprintln!("penstock: approve requires exactly one sink class ({classes})");
+            eprintln!("customhouse: approve requires exactly one sink class ({classes})");
             return ExitCode::FAILURE;
         }
     };
     let Some(class) = SinkClass::parse(&name) else {
-        eprintln!("penstock: unknown sink class `{name}` (expected one of: {classes})");
+        eprintln!("customhouse: unknown sink class `{name}` (expected one of: {classes})");
         return ExitCode::FAILURE;
     };
 
@@ -158,23 +158,23 @@ fn run_approve(rest: Vec<String>) -> ExitCode {
     match store.save() {
         Ok(()) => {
             eprintln!(
-                "penstock: approved one {} call. It is single-use and expires in {} minutes.",
+                "customhouse: approved one {} call. It is single-use and expires in {} minutes.",
                 class.as_str(),
                 approval::VALIDITY_MS / 60_000
             );
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("penstock: failed to save approval: {e}");
+            eprintln!("customhouse: failed to save approval: {e}");
             ExitCode::FAILURE
         }
     }
 }
 
 fn print_usage() {
-    eprintln!("Usage: penstock <command> [options]");
+    eprintln!("Usage: customhouse <command> [options]");
     eprintln!("  serve [--config <path>]   Run the aggregating MCP proxy over stdio (default;");
-    eprintln!("                            config default: penstock.toml)");
+    eprintln!("                            config default: customhouse.toml)");
     eprintln!("  repin <server>            Accept an upstream's current tool definitions");
     eprintln!("  approve <sink-class>      Authorise one retry of an escalated sink call");
     eprintln!("  --version | --help");

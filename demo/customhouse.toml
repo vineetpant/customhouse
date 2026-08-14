@@ -1,6 +1,6 @@
 # Demo configuration: one upstream, the bundled mock MCP server that exposes a
 # single `echo` tool. Paths are relative to the repo root, where run.sh invokes
-# Penstock. Real deployments point `command` at a real MCP server binary.
+# Customhouse. Real deployments point `command` at a real MCP server binary.
 [[upstream]]
 name = "mock"
 command = "target/release/mock_upstream"

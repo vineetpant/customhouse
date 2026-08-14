@@ -1,12 +1,12 @@
-//! Scripted rug-pull demo, driven as a real MCP client against Penstock.
+//! Scripted rug-pull demo, driven as a real MCP client against Customhouse.
 //!
 //! Run it through `./demo/run_rugpull.sh`, which builds the binaries and points
-//! `PENSTOCK_HOME` at a throwaway directory. Each "run" below spawns a fresh
-//! `penstock serve`, because pin checking happens when Penstock connects to an
+//! `CUSTOMHOUSE_HOME` at a throwaway directory. Each "run" below spawns a fresh
+//! `customhouse serve`, because pin checking happens when Customhouse connects to an
 //! upstream — the pins persist across runs in the store.
 //!
 //! Nothing here is faked: the tool lists come from real `tools/list` responses
-//! and the before/after diff is read out of the audit ledger Penstock wrote. The
+//! and the before/after diff is read out of the audit ledger Customhouse wrote. The
 //! withhold is asserted — if a mutated definition were ever served, this panics
 //! rather than printing a comforting lie.
 
@@ -19,20 +19,20 @@ type BoxError = Box<dyn Error + Send + Sync>;
 
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
-    let bin = env_or("PENSTOCK_BIN", "target/release/penstock");
-    let config = env_or("PENSTOCK_CONFIG", "demo/penstock.toml");
-    let home = std::env::var("PENSTOCK_HOME")
-        .expect("PENSTOCK_HOME must be set — run this via ./demo/run_rugpull.sh");
+    let bin = env_or("CUSTOMHOUSE_BIN", "target/release/customhouse");
+    let config = env_or("CUSTOMHOUSE_CONFIG", "demo/customhouse.toml");
+    let home = std::env::var("CUSTOMHOUSE_HOME")
+        .expect("CUSTOMHOUSE_HOME must be set — run this via ./demo/run_rugpull.sh");
 
-    rule("Penstock rug-pull demo — a tool's definition silently changes");
+    rule("Customhouse rug-pull demo — a tool's definition silently changes");
 
-    rule("Run 1 — first sight: Penstock pins mock's echo and serves it");
+    rule("Run 1 — first sight: Customhouse pins mock's echo and serves it");
     let served = list_tools(&bin, &config, false).await?;
     say(&format!("tools/list: {served:?}"));
 
     rule("The upstream is swapped: echo's description now carries a prompt injection");
 
-    rule("Run 2 — on reconnect, Penstock re-checks the definition and catches the change");
+    rule("Run 2 — on reconnect, Customhouse re-checks the definition and catches the change");
     let served = list_tools(&bin, &config, true).await?;
     say(&format!(
         "tools/list: {served:?}   <- the mutated tool is withheld, not served"
@@ -45,7 +45,7 @@ async fn main() -> Result<(), BoxError> {
     print_withheld_diff(Path::new(&home).join("ledger.jsonl").as_path())?;
 
     rule("The operator reviews the diff and explicitly accepts the new definition");
-    say("$ penstock repin mock");
+    say("$ customhouse repin mock");
     let status = std::process::Command::new(&bin)
         .args(["repin", "mock"])
         .status()?;
@@ -61,14 +61,14 @@ async fn main() -> Result<(), BoxError> {
         "after an explicit repin the tool should be served again"
     );
 
-    println!("\nPenstock never served the changed definition until a human accepted it.");
+    println!("\nCustomhouse never served the changed definition until a human accepted it.");
     Ok(())
 }
 
-/// Spawn one `penstock serve`, list what it exposes, and shut it down.
+/// Spawn one `customhouse serve`, list what it exposes, and shut it down.
 ///
 /// `rugpull` sets the mock upstream's mutation flag in the child's environment;
-/// Penstock passes its environment to the upstream it spawns.
+/// Customhouse passes its environment to the upstream it spawns.
 async fn list_tools(bin: &str, config: &str, rugpull: bool) -> Result<Vec<String>, BoxError> {
     let mut command = tokio::process::Command::new(bin);
     command.args(["serve", "--config", config]);

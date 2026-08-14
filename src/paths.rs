@@ -8,14 +8,14 @@
 
 use std::path::{Component, Path, PathBuf};
 
-/// The Penstock home directory: `PENSTOCK_HOME`, else `~/.penstock`. Holds
+/// The Customhouse home directory: `CUSTOMHOUSE_HOME`, else `~/.customhouse`. Holds
 /// config, ledger, and pin store. The invariant gate protects this location and
 /// the ledger writes inside it, so the ledger is covered by I1 for free — see the
 /// I-5 test in `ledger`.
-pub fn penstock_home() -> PathBuf {
-    match std::env::var_os("PENSTOCK_HOME") {
+pub fn customhouse_home() -> PathBuf {
+    match std::env::var_os("CUSTOMHOUSE_HOME") {
         Some(value) => expand_tilde(&value.to_string_lossy()),
-        None => home_dir().unwrap_or_default().join(".penstock"),
+        None => home_dir().unwrap_or_default().join(".customhouse"),
     }
 }
 

@@ -3,10 +3,10 @@
 //! Run through `./demo/run_selfprotect_real.sh`, which needs Node (it fetches
 //! the official `@modelcontextprotocol/server-filesystem` via npx).
 //!
-//! The setup is deliberately hostile to Penstock: `PENSTOCK_HOME` is placed
+//! The setup is deliberately hostile to Customhouse: `CUSTOMHOUSE_HOME` is placed
 //! *inside* the directory the filesystem server is allowed to access, so the
 //! server is fully capable of reading the ledger and overwriting the pin store.
-//! Nothing but the §3 invariant gate stands between the agent and Penstock's own
+//! Nothing but the §3 invariant gate stands between the agent and Customhouse's own
 //! state. Every outcome below is asserted — if self-protection regressed, this
 //! exits non-zero instead of printing something reassuring.
 
@@ -21,15 +21,15 @@ type Client = rmcp::service::RunningService<rmcp::RoleClient, ()>;
 
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
-    let bin = env_or("PENSTOCK_BIN", "target/release/penstock");
-    let config = env_or("PENSTOCK_CONFIG", "");
-    let home = std::env::var("PENSTOCK_HOME").expect("run via ./demo/run_selfprotect_real.sh");
-    let safe_file = std::env::var("PENSTOCK_DEMO_FILE").expect("run via the demo script");
+    let bin = env_or("CUSTOMHOUSE_BIN", "target/release/customhouse");
+    let config = env_or("CUSTOMHOUSE_CONFIG", "");
+    let home = std::env::var("CUSTOMHOUSE_HOME").expect("run via ./demo/run_selfprotect_real.sh");
+    let safe_file = std::env::var("CUSTOMHOUSE_DEMO_FILE").expect("run via the demo script");
 
-    rule("Penstock vs a real MCP server (@modelcontextprotocol/server-filesystem)");
+    rule("Customhouse vs a real MCP server (@modelcontextprotocol/server-filesystem)");
     say(&format!(
         "the server is allowed to access the directory that also contains\n  \
-         Penstock's own state: {home}\n  \
+         Customhouse's own state: {home}\n  \
          so the server *can* reach these files — only the gate stops it."
     ));
 
@@ -60,11 +60,11 @@ async fn main() -> Result<(), BoxError> {
         Err(e) => return Err(format!("a normal read should succeed, got: {e}").into()),
     }
 
-    rule("DENIED: the agent tries to read Penstock's own audit ledger");
+    rule("DENIED: the agent tries to read Customhouse's own audit ledger");
     let ledger = format!("{home}/ledger.jsonl");
     assert_denied(&client, &read_tool, "path", &ledger, "read the ledger").await?;
 
-    rule("DENIED: the agent tries to overwrite Penstock's pin store");
+    rule("DENIED: the agent tries to overwrite Customhouse's pin store");
     let pins = format!("{home}/pins.json");
     assert_denied(
         &client,
@@ -83,7 +83,7 @@ async fn main() -> Result<(), BoxError> {
     Ok(())
 }
 
-/// Call a tool and require that Penstock refuses it. A success here means
+/// Call a tool and require that Customhouse refuses it. A success here means
 /// self-protection has regressed against real software.
 async fn assert_denied(
     client: &Client,

@@ -1,11 +1,11 @@
-# Penstock
+# Customhouse
 
-[![ci](https://github.com/vineetpant/penstock/actions/workflows/ci.yml/badge.svg)](https://github.com/vineetpant/penstock/actions/workflows/ci.yml)
+[![ci](https://github.com/vineetpant/customhouse/actions/workflows/ci.yml/badge.svg)](https://github.com/vineetpant/customhouse/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](./LICENSE)
 
 **Agents get compromised through data, not code.**
 
-Penstock tracks which upstream every input came from, and deterministically
+Customhouse tracks which upstream every input came from, and deterministically
 blocks money-moving or data-egress calls in any session that has received
 untrusted content. No model sits in the decision path, and no payload is ever
 pattern-matched — the block follows from provenance alone, so it cannot be
@@ -31,7 +31,7 @@ and the fix for it is on the roadmap.
 An agent reads a poisoned file through the **real** MCP filesystem server, then
 tries to email it out through a **different** server. The read and the send live
 on separate upstreams — a proxy that wraps one server never sees both halves of
-that flow. Penstock aggregates them, so it does.
+that flow. Customhouse aggregates them, so it does.
 
 ```sh
 ./demo/run_flow_block.sh
@@ -48,7 +48,7 @@ Actual output:
 
 ── SCENARIO C — the sink on a DIFFERENT server is now blocked ──
   ✗ mail__send_email refused (-32602):
-      denied by Penstock flow policy: this session received untrusted content
+      denied by Customhouse flow policy: this session received untrusted content
       from fs (call 0), so calls in the external_send class are blocked for the
       rest of the session
   ✗ mail__transfer_funds refused (-32602):
@@ -87,9 +87,9 @@ guessed:
 
 Money movement never produced a false positive, so it can bear a hard block.
 Sending and uploading cannot, so they get an out-of-band approval path:
-`penstock approve external_send` authorises exactly one retry, expires in ten
+`customhouse approve external_send` authorises exactly one retry, expires in ten
 minutes, and cannot be granted by the agent itself — the approval store lives
-inside the directory Penstock's own self-protection defends.
+inside the directory Customhouse's own self-protection defends.
 
 ```toml
 [flow]
@@ -100,29 +100,29 @@ data_egress      = "require_approval"
 
 ## Also included
 
-**Observability.** Penstock aggregates your MCP servers behind one endpoint and
+**Observability.** Customhouse aggregates your MCP servers behind one endpoint and
 writes an append-only JSONL ledger of every mediated call — which tool, which
 upstream, what was decided. Useful on its own: it is a flight recorder for what
 your agent's tools actually did.
 
 **Self-protection.** A set of invariants compiled into the binary — not
 configurable, not reachable through the proxied surface — denies any call whose
-arguments resolve onto Penstock's own files: its home directory, its ledger and
+arguments resolve onto Customhouse's own files: its home directory, its ledger and
 pin store, its binary, its config. Paths are canonicalized first (symlinks, `..`,
 `~`), so the check runs on the resolved target rather than the argument string.
 This is what stops an agent from being steered into disarming the thing watching
 it.
 
 **Rug-pull detection (R1).** Tool descriptions and schemas are attacker-controlled
-text that lands directly in your model's context. Penstock pins each tool
+text that lands directly in your model's context. Customhouse pins each tool
 definition on first sight and, on reconnect, withholds any tool whose definition
 changed — it will not serve the old definition while the upstream would execute
-the new one. Restoring it takes an explicit `penstock repin <server>`, after you
+the new one. Restoring it takes an explicit `customhouse repin <server>`, after you
 have seen the diff.
 
 ## Roadmap
 
-**Value fingerprinting.** Flow decisions are session-scoped: Penstock knows the
+**Value fingerprinting.** Flow decisions are session-scoped: Customhouse knows the
 session saw untrusted content, not whether *this* call carries it. Recording
 normalised fragments of untrusted results would let a refusal distinguish "these
 arguments contain data from that read" from "this session merely saw untrusted
@@ -135,13 +135,13 @@ audit records; and **AgentDojo benchmarks** — published attack-success *and*
 task-utility numbers, because a measured mediocre result is credible and an
 unmeasured strong claim is not.
 
-What Penstock does **not** do is listed plainly in
+What Customhouse does **not** do is listed plainly in
 [`SECURITY.md`](./SECURITY.md), including where the session-scoped rule
 over-blocks and what it cannot see.
 
 ## How it works
 
-Penstock is an **aggregating proxy**: it presents to your client as a single MCP
+Customhouse is an **aggregating proxy**: it presents to your client as a single MCP
 server and multiplexes N upstreams behind it, namespacing their tools
 (`web__fetch`, `mail__send`). That shape is the design's central bet. The attack
 worth stopping is a *cross-server flow* — content read through one server,
@@ -169,13 +169,13 @@ genuinely different:
 
 **Structural, not signature-based.** The common approach detects badness *in
 content*, with maintained pattern lists — injection signatures, DLP regexes.
-Penstock never inspects what content says. Decisions rest on provenance: where
+Customhouse never inspects what content says. Decisions rest on provenance: where
 data came from, where it is going, whether a definition changed since you
 approved it. A signature list must be updated forever and still misses the
 attack nobody has written a rule for yet; provenance does not care how the
 payload is worded, encoded or summarised.
 
-**Aggregating, not per-server.** Penstock sits in front of *all* your MCP
+**Aggregating, not per-server.** Customhouse sits in front of *all* your MCP
 servers at once. That is what makes the cross-server block above possible: the
 poisoned read and the attempted send happen on different upstreams, and a proxy
 wrapping a single server only ever sees its own half of that flow.
@@ -187,7 +187,7 @@ security properties. No open-core tier, no license key, no source-available
 split: for something sitting in your enforcement path, being able to read and
 fork all of it is a security property.
 
-Where Penstock is deliberately narrow, and what it does not yet protect against,
+Where Customhouse is deliberately narrow, and what it does not yet protect against,
 is set out in [`SECURITY.md`](./SECURITY.md) rather than left for you to
 discover.
 
@@ -196,12 +196,12 @@ discover.
 Build from source:
 
 ```sh
-git clone https://github.com/vineetpant/penstock && cd penstock
-cargo build --release      # binary at target/release/penstock
+git clone https://github.com/vineetpant/customhouse && cd customhouse
+cargo build --release      # binary at target/release/customhouse
 cargo test
 ```
 
-Point Penstock at your MCP servers with a `penstock.toml`:
+Point Customhouse at your MCP servers with a `customhouse.toml`:
 
 ```toml
 # Every upstream declares whether its results may be treated as trusted input.
@@ -233,26 +233,26 @@ class = "external_send"
 ```
 
 When a class is set to `require_approval`, a blocked call is refused with
-instructions rather than held open. An operator runs `penstock approve
+instructions rather than held open. An operator runs `customhouse approve
 external_send` in a terminal; that authorises **one** retry, expires after ten
 minutes, and cannot be granted by the agent — the approval store lives inside the
-directory Penstock's self-protection defends.
+directory Customhouse's self-protection defends.
 
-Then point your MCP client at Penstock instead of at those servers directly:
+Then point your MCP client at Customhouse instead of at those servers directly:
 
 ```json
 {
   "mcpServers": {
-    "penstock": {
-      "command": "/path/to/penstock",
-      "args": ["serve", "--config", "/path/to/penstock.toml"]
+    "customhouse": {
+      "command": "/path/to/customhouse",
+      "args": ["serve", "--config", "/path/to/customhouse.toml"]
     }
   }
 }
 ```
 
-State (ledger, pins) lives in `$PENSTOCK_HOME`, default `~/.penstock`.
-Run `penstock --help` for the full CLI.
+State (ledger, pins) lives in `$CUSTOMHOUSE_HOME`, default `~/.customhouse`.
+Run `customhouse --help` for the full CLI.
 
 ## Documentation
 

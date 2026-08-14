@@ -118,7 +118,7 @@ impl SinkMap {
     }
 }
 
-/// Strip the `server__` namespace Penstock adds, leaving the tool's own name.
+/// Strip the `server__` namespace Customhouse adds, leaving the tool's own name.
 fn bare_name(namespaced: &str) -> &str {
     match namespaced.split_once(crate::config::NAMESPACE_SEP) {
         Some((_, bare)) => bare,

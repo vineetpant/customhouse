@@ -1,8 +1,9 @@
-# Penstock — Design Document v2
+# Customhouse — Design Document v2
 
-> Deterministic enforcement at the MCP tool boundary. A penstock is the
-> controlled conduit that channels water under pressure through one gate — every
-> flow passes the same point, and that point decides what gets through.
+> Deterministic enforcement at the MCP tool boundary. A customhouse is where
+> goods are declared and inspected before they are allowed through — everything
+> crossing the boundary passes the same point, and that point decides what gets
+> in and what goes out.
 
 **One-line thesis:** the model cannot be trusted to decide what actions are safe, so the decision moves outside the model into a deterministic reference monitor that sits between the agent and every tool it can reach.
 
@@ -37,7 +38,7 @@
 | Indirect prompt injection | Tainted web/email/file content drives an unintended tool call |
 | Exfiltration via permitted tools | Source and sink individually allowed; the *flow* is the attack |
 | **Tool poisoning / rug pulls** | Injection payload in tool descriptions; definitions mutate mid-session |
-| **Self-disarm** | Agent is steered into editing Penstock's own policy/ledger through a proxied filesystem tool |
+| **Self-disarm** | Agent is steered into editing Customhouse's own policy/ledger through a proxied filesystem tool |
 | Over-permissioned skills | A skill reaches tools and scopes it never needed |
 | Supply-chain substitution | Artifact is not what the publisher (or the user, at pin time) attested |
 | Silent permission drift | A new version quietly widens its effective footprint |
@@ -45,7 +46,7 @@
 
 **Out of scope (v1 — say so in the README)**
 
-- Malicious *client* or compromised host OS: Penstock trusts the process boundary it runs in. It is a reference monitor, not a sandbox; pair with OS-level sandboxing for hostile-host threat models.
+- Malicious *client* or compromised host OS: Customhouse trusts the process boundary it runs in. It is a reference monitor, not a sandbox; pair with OS-level sandboxing for hostile-host threat models.
 - Attacks that live entirely in model output text and never reach a mediated call.
 - Semantic laundering of tainted content (§7.3 — mitigated by sink tiering, not solved).
 - Multi-tenant / enterprise policy distribution.
@@ -65,7 +66,7 @@
             │  stdio  or  Streamable HTTP
             ▼
     ┌───────────────────────────────────────┐
-    │              PENSTOCK                 │
+    │              CUSTOMHOUSE                 │
     │ shim → metadata pin → labels →        │
     │ provenance → policy → consent → ledger│
     └───────────────────────────────────────┘
@@ -75,11 +76,11 @@
      (upstream MCP servers)
 ```
 
-**Penstock is an aggregating proxy** — it presents as a single MCP server and multiplexes N upstreams. The attack is a *cross-server* flow (read via web server, exfiltrate via mail server); a per-server sidecar structurally cannot see it. Only a single chokepoint satisfies complete mediation.
+**Customhouse is an aggregating proxy** — it presents as a single MCP server and multiplexes N upstreams. The attack is a *cross-server* flow (read via web server, exfiltrate via mail server); a per-server sidecar structurally cannot see it. Only a single chokepoint satisfies complete mediation.
 
 Consequences: upstream-namespaced tool names (`web__fetch`, `mail__send`), merged/rewritten/cached `tools/list`, wrapped (never swallowed) upstream errors.
 
-**Protocol target:** MCP **2026-07-28** primary (stateless core, no initialize handshake, version/capabilities in `_meta` per request), **2025-11-25** compatibility path for the deployed base. Note: statelessness simplifies proxy plumbing but deletes the protocol-level session the taint model would have leaned on — Penstock therefore defines its own session concept (§6).
+**Protocol target:** MCP **2026-07-28** primary (stateless core, no initialize handshake, version/capabilities in `_meta` per request), **2025-11-25** compatibility path for the deployed base. Note: statelessness simplifies proxy plumbing but deletes the protocol-level session the taint model would have leaned on — Customhouse therefore defines its own session concept (§6).
 
 **Language:** Rust (`rmcp`, tokio). Single static binary, one-line drop-in to an existing client config. Distribution friction is a security-adoption factor. Pin the `rmcp` version explicitly; the SDK has moved fast and code generated from memory of older APIs will be stale.
 
@@ -87,19 +88,19 @@ Consequences: upstream-namespaced tool names (`web__fetch`, `mail__send`), merge
 
 ## 3. Self-protection invariants (new — finding #1)
 
-The v1 design was disarmable: a proxied filesystem server could be steered into rewriting Penstock's own policy file, after which the *next* call is legitimately allowed. Therefore:
+The v1 design was disarmable: a proxied filesystem server could be steered into rewriting Customhouse's own policy file, after which the *next* call is legitimately allowed. Therefore:
 
 *Confirmed in the wild since v1 was written:* a GitHub Copilot agent was induced to rewrite its own approval settings, disabling human review and reaching unrestricted shell execution. The guardrail lived **inside** the agent, so the agent could remove it. That is precisely the failure this section exists to make structurally impossible — the invariants below are compiled into the binary and are not reachable through the surface being proxied.
 
 **Invariant set, compiled into the binary, evaluated before any policy rule, not expressible or removable in any config:**
 
-- I1. Any mediated operation whose target resolves inside the Penstock home directory (config, policy, ledger, fingerprint store, consent socket) → **Deny**. Path resolution happens after canonicalization (symlinks, `..`, homedir expansion) — the check runs on the resolved path, not the argument string.
-- I2. Any mediated operation targeting the Penstock binary itself or its containing directory → **Deny**.
-- I3. Any mediated exec/shell argument that references the Penstock home directory or binary path (post-normalization, §7.4 pipeline) → **Escalate** minimum, regardless of tier.
+- I1. Any mediated operation whose target resolves inside the Customhouse home directory (config, policy, ledger, fingerprint store, consent socket) → **Deny**. Path resolution happens after canonicalization (symlinks, `..`, homedir expansion) — the check runs on the resolved path, not the argument string.
+- I2. Any mediated operation targeting the Customhouse binary itself or its containing directory → **Deny**.
+- I3. Any mediated exec/shell argument that references the Customhouse home directory or binary path (post-normalization, §7.4 pipeline) → **Escalate** minimum, regardless of tier.
 - I4. Policy and config files are loaded at startup and on explicit operator reload (signal / CLI), never re-read mid-flight because a file changed. A policy change therefore requires an action outside the mediated surface.
 - I5. The ledger is append-only from the proxy's side; no mediated path can read it (the ledger records flows — letting the model read it re-injects every tainted string it mentions).
 
-Limitations stated honestly: I1–I3 protect against the *mediated* surface only. An agent with unmediated shell access outside MCP defeats this — that is the out-of-scope malicious-host case, and the README says so. Defense in depth: recommend running Penstock state under a different OS user than upstream filesystem servers.
+Limitations stated honestly: I1–I3 protect against the *mediated* surface only. An agent with unmediated shell access outside MCP defeats this — that is the out-of-scope malicious-host case, and the README says so. Defense in depth: recommend running Customhouse state under a different OS user than upstream filesystem servers.
 
 ---
 
@@ -107,7 +108,7 @@ Limitations stated honestly: I1–I3 protect against the *mediated* surface only
 
 Tool descriptions and schemas are attacker-controlled text that lands directly in model context. v2 treats server metadata as a first-class untrusted input:
 
-- **Pin at first sight.** On first `tools/list` from an upstream, Penstock canonicalizes and hashes each tool definition (name, description, input schema) and writes the pin set to its own store (protected by §3). Same for `resources/list` and `prompts/list` metadata.
+- **Pin at first sight.** On first `tools/list` from an upstream, Customhouse canonicalizes and hashes each tool definition (name, description, input schema) and writes the pin set to its own store (protected by §3). Same for `resources/list` and `prompts/list` metadata.
 - **Rug-pull detection.** Every subsequent list is re-hashed and diffed against pins. A changed definition → withhold the changed tool (serve the pinned version is *wrong* — the server would still execute the new behavior; withholding is the only honest option), surface a diff to the operator, require explicit re-pin to restore. Ledger-record every mutation event.
 - **Descriptions are labeled.** Metadata carries `trust: untrusted` in the ledger like any content. v1 does **not** attempt pattern-based sanitization of descriptions — pattern-matching "injection-looking text" is model-adjacent guesswork and violates the determinism constraint in spirit. Pinning + mutation-blocking + operator visibility is the deterministic control; the pin-review step (operator sees each description once, at pin time) is where a human reads what the model will be reading.
 - **Version binding.** A pin set is bound to the upstream's declared implementation name/version; a version change invalidates pins and triggers the same re-pin flow — which is also the hook where §9 profile diffing lands ("v1.4.3 requests capabilities v1.4.2 did not").
@@ -141,13 +142,13 @@ The README's claim becomes: *complete mediation over tools, resources, and promp
 
 ## 6. Session & taint lifecycle (new — finding #3)
 
-The 2026-07-28 spec removes protocol sessions, and MCP has never signaled conversation boundaries. Penstock defines its own session, and the doc states the failure mode being managed: **label creep** — without resets, every long-lived deployment converges to permanently-tainted and escalation fatigue kills the tool.
+The 2026-07-28 spec removes protocol sessions, and MCP has never signaled conversation boundaries. Customhouse defines its own session, and the doc states the failure mode being managed: **label creep** — without resets, every long-lived deployment converges to permanently-tainted and escalation fatigue kills the tool.
 
 - **Scope.** stdio: one session per client connection (process lifetime). Streamable HTTP: sessions keyed on client identity (auth principal where present, else per-connection), never global.
 - **Reset, three paths:**
   1. Connection end.
   2. Idle timeout (default 30 min without a mediated call) — taint state and per-session fingerprint store cleared, reset ledger-recorded.
-  3. Explicit operator reset: a Penstock-owned `penstock__reset_taint` tool exposed to the client — **gated by consent (§10)**, because a model that can silently reset its own taint has no taint. The consent prompt shows what is being forgotten ("clears taint from web:evil.test, mail:inbox — 3 origins").
+  3. Explicit operator reset: a Customhouse-owned `customhouse__reset_taint` tool exposed to the client — **gated by consent (§10)**, because a model that can silently reset its own taint has no taint. The consent prompt shows what is being forgotten ("clears taint from web:evil.test, mail:inbox — 3 origins").
 - **No decay.** Taint does not fade with time within a session; partial-decay schemes are unprincipled knobs. It is binary per origin per session, cleared only by the three paths above.
 - **Cross-session persistence (the file-laundering hole).** An agent that writes tainted content to a file and reads it back next session has laundered the label. v1 answer, kept deliberately narrow: when a mediated *write* carries tainted-derived content, the ledger records `(resolved path → origins)`; a later mediated *read* of that path (any session) re-attaches those origins. This covers the proxy-visible laundering path. Out-of-band writes are the malicious-host case. A full persistent-label store is future work; the doc says which half is covered.
 
@@ -190,7 +191,7 @@ A boundary proxy cannot see inside the model; once untrusted content enters cont
 
 ### 7.4 Evasion resistance (new — finding #7)
 
-- **Chunked exfil.** Per-call coverage scoring misses secrets split into sub-k fragments across calls. Penstock keeps a per-`(origin, sink-destination)` **cumulative coverage score across the session**; crossing the aggregate threshold escalates even though no single call fired. Deterministic, session-scoped, cleared on reset.
+- **Chunked exfil.** Per-call coverage scoring misses secrets split into sub-k fragments across calls. Customhouse keeps a per-`(origin, sink-destination)` **cumulative coverage score across the session**; crossing the aggregate threshold escalates even though no single call fired. Deterministic, session-scoped, cleared on reset.
 - **Resource-exhaustion via decode.** Depth cap, size cap, and a per-call time budget on the §7.3 pipeline. Budget exceeded ⇒ **Escalate** (fail closed but visible), never silent allow, never silent drop.
 - **Fragmenting below k.** Noted openly as residual risk: k-gram matching has a floor. The cumulative score narrows it; sink-side argument-shape constraints (R2) narrow it further; it does not vanish. Stated, not hidden.
 
@@ -222,7 +223,7 @@ Decisions: `Allow` · `Escalate` · `Deny`. Three, not two — hard-deny everyth
 
 v1 assumed publisher-signed manifests; no such ecosystem exists, and shipped that way R1/R2 are dead on arrival. Reordered:
 
-- **v1: operator-authored profiles.** You write a TOML profile per upstream server — AppArmor-style — declaring tools, network domain allowlist, filesystem read/write prefixes, exec permission, and default emitted trust. Penstock can bootstrap a draft profile from observed Phase-0 ledger data (the `audit2allow` arc: observe → generate → tighten → enforce).
+- **v1: operator-authored profiles.** You write a TOML profile per upstream server — AppArmor-style — declaring tools, network domain allowlist, filesystem read/write prefixes, exec permission, and default emitted trust. Customhouse can bootstrap a draft profile from observed Phase-0 ledger data (the `audit2allow` arc: observe → generate → tighten → enforce).
 - **v1.x: community profile repo.** Reviewed profiles for popular servers; profile quality becomes a shared good and the project's first network effect.
 - **Later: publisher signatures** (ed25519/minisign first, sigstore-style transparency after) as an additional trust input to §4 pinning — the ecosystem play, not the v1 dependency.
 
@@ -269,7 +270,7 @@ A blocked call waiting on human approval races the client's tool timeout (common
 
 - **Phase 0 — passthrough proxy.** Aggregating shim, namespacing, §4 pinning, full ledger, policy hardwired to Allow. Shippable alone as an observability tool, and it generates §9 draft profiles. Includes §3 invariants from the first commit — self-protection is not a later feature.
 - **Phase 1 — labels and policy.** Taint, provenance, pure policy engine, R1–R3, consent channel with budget.
-- **Phase 2 — demo and numbers.** Qualitative: two identical agents, identical permissions, one behind Penstock; a real indirect-injection payload; one exfiltrates, one is blocked with the flow explained. Quantitative: AgentDojo, publishing **paired** attack-success and task-utility numbers, honestly even if mediocre — a measured mediocre result is credible, an unmeasured strong claim is not. *Named workstream:* the AgentDojo adapter — its harness drives Python function tools, so benchmarking means wrapping its suite as MCP servers behind the proxy. Real engineering, budgeted as such.
+- **Phase 2 — demo and numbers.** Qualitative: two identical agents, identical permissions, one behind Customhouse; a real indirect-injection payload; one exfiltrates, one is blocked with the flow explained. Quantitative: AgentDojo, publishing **paired** attack-success and task-utility numbers, honestly even if mediocre — a measured mediocre result is credible, an unmeasured strong claim is not. *Named workstream:* the AgentDojo adapter — its harness drives Python function tools, so benchmarking means wrapping its suite as MCP servers behind the proxy. Real engineering, budgeted as such.
 - **Phase 3 — profiles and regression diffing.** Footprint capture as union-with-frequencies over N runs (agents are non-deterministic; naive diffs are flaky noise), declared-vs-observed diffing, CI reporter. Cheap by then — the ledger has held the data since Phase 0.
 
 ---

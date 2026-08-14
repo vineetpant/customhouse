@@ -1,10 +1,10 @@
-# Penstock — Claude Code Instructions
+# Customhouse — Claude Code Instructions
 
 `DESIGN-v2.md` is the source of truth; when it disagrees with this file, it wins.
 
 ## Project summary
 
-Penstock is a deterministic reference monitor for the MCP tool boundary: an aggregating proxy between an agent client and N upstream MCP servers that enforces the rule that untrusted input can't drive sensitive output. **Hard constraint: no LLM/model call and no network access exists anywhere in the enforcement path — policy evaluation is a pure function.**
+Customhouse is a deterministic reference monitor for the MCP tool boundary: an aggregating proxy between an agent client and N upstream MCP servers that enforces the rule that untrusted input can't drive sensitive output. **Hard constraint: no LLM/model call and no network access exists anywhere in the enforcement path — policy evaluation is a pure function.**
 
 ## Implementation map (where things are — not a changelog; git has history)
 
@@ -17,13 +17,13 @@ Penstock is a deterministic reference monitor for the MCP tool boundary: an aggr
 
 - **Phase 0 — Reference-monitor foundation. DONE.** Aggregation, namespacing,
   routing; §3 self-protection invariants; append-only ledger; R1 tool-definition
-  pinning with `penstock repin`. Unmediated surfaces (resources, prompts) are
+  pinning with `customhouse repin`. Unmediated surfaces (resources, prompts) are
   refused explicitly rather than silently reported empty. Verified against the
   real `@modelcontextprotocol/server-filesystem`, not only the bundled mock.
 - **Phase 1 — The moat: deterministic cross-server flow enforcement. DONE.**
   Trust classes per upstream (default untrusted), sink taxonomy, session taint,
   and the flow rule at the chokepoint. `Escalate` plus out-of-band
-  `penstock approve <class>`. Measured: `./demo/run_metrics.sh` → `METRICS.md`.
+  `customhouse approve <class>`. Measured: `./demo/run_metrics.sh` → `METRICS.md`.
   Still open from this phase: **value fingerprinting** (evidence quality, not the
   guarantee) and **mid-session pin re-check** on every client `tools/list`.
 - **Phase 2 — Numbers.** AgentDojo adapter; paired attack-success and
@@ -35,7 +35,7 @@ The thesis is now demonstrated, so the next work is proving it at scale
 (Phase 2) rather than broadening surface. Signed receipts, fuzzing, protocol
 breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
 
-- **Two enforcement points.** (1) The call chokepoint: `PenstockProxy::call_tool`
+- **Two enforcement points.** (1) The call chokepoint: `CustomhouseProxy::call_tool`
   runs `invariants.assess()` (§3, compiled-in, always first) → `flow.assess()`
   (R3) → route → taint-if-untrusted. (2) Connect time: `Registry::connect`
   pin-checks each upstream's tools and withholds mutated ones before exposure.
@@ -50,7 +50,7 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
   goes one way via `From`. Both stay exhaustive so a new outcome breaks every
   match site instead of falling through a wildcard into "allow".
 - **Modules & dependency direction** (leaves at the bottom; no lateral imports):
-  `paths` (path resolution + `penstock_home()`), `config` (`penstock.toml`), and
+  `paths` (path resolution + `customhouse_home()`), `config` (`customhouse.toml`), and
   `decision` (outcome vocabulary), `pin` (pin store + canonical diffing),
   `session` (taint state), `sink` (sink taxonomy + matching) and `approval`
   (operator acks) are leaves; `config` depends on `sink`; `invariant` (§3 gate),
@@ -107,7 +107,7 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
   `ledger`, `flow`) depend only on leaves; `proxy` is the composition root.
   `invariant`/`ledger`/`flow`/`upstream` must never import each other in
   production code — if two need a thing, it belongs in a leaf they both depend on
-  (that is why `penstock_home` lives in `paths` and `Decision` in `decision`).
+  (that is why `customhouse_home` lives in `paths` and `Decision` in `decision`).
   Exception: `#[cfg(test)]` may cross laterally when the cross-module property
   *is* the test — the I-5 drift test in `ledger` imports `Invariants` by design;
   do not "fix" it.
@@ -129,7 +129,7 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
 - **Client-facing vs operator-facing types stay separate by construction.**
   `Decision` (crosses to the client) carries no path; `Assessment` (operator-only)
   does. Don't merge them.
-- **Tests are hermetic:** tempdirs, never the real `~/.penstock`; a pure unit
+- **Tests are hermetic:** tempdirs, never the real `~/.customhouse`; a pure unit
   should be testable without spawning a process.
 - **New dependency or newtype requires a one-line "considered and rejected"
   rationale** in the commit or code — dep-minimalism is a security property here.

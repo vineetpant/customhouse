@@ -1,4 +1,4 @@
-//! Penstock — deterministic reference monitor for the MCP tool boundary.
+//! Customhouse — deterministic reference monitor for the MCP tool boundary.
 //!
 //! Hard constraint (see CLAUDE.md / DESIGN-v2.md): no LLM/model call and no
 //! network access exists anywhere in the enforcement path. Policy evaluation
@@ -22,7 +22,7 @@ pub use decision::{Assessment, Decision, InvariantOutcome};
 pub use invariant::Invariants;
 pub use ledger::Ledger;
 pub use pin::PinStore;
-pub use proxy::{serve_stdio, PenstockProxy, ServeError};
+pub use proxy::{serve_stdio, CustomhouseProxy, ServeError};
 
 /// The crate version, sourced from `Cargo.toml` at compile time.
 pub fn version() -> &'static str {
@@ -44,7 +44,7 @@ mod tests {
     }
 
     #[test]
-    fn name_is_penstock() {
-        assert_eq!(name(), "penstock");
+    fn name_is_customhouse() {
+        assert_eq!(name(), "customhouse");
     }
 }

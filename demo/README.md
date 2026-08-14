@@ -1,9 +1,9 @@
-# Penstock demo
+# Customhouse demo
 
 Run: **`./demo/run.sh`**
 
-You'll watch a real MCP session: Penstock lists the mock upstream's tool, routes a
-normal `mock__echo` call, then **blocks** a call that targets Penstock's own files
+You'll watch a real MCP session: Customhouse lists the mock upstream's tool, routes a
+normal `mock__echo` call, then **blocks** a call that targets Customhouse's own files
 (self-protection, `-32602`). Finally it prints the `ledger.jsonl` the session
 produced — one `allow` line, one `deny` line with operator detail. Hermetic: it
-uses a throwaway `PENSTOCK_HOME` and never touches your real `~/.penstock`.
+uses a throwaway `CUSTOMHOUSE_HOME` and never touches your real `~/.customhouse`.

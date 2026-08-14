@@ -6,7 +6,7 @@
 //! serving a file that contains a prompt-injection payload. The sink side is a
 //! mock exposing `send_email` and `transfer_funds`, because nobody should need a
 //! payment provider to run a demo — and the question being asked is whether
-//! Penstock lets the call through at all, not what the sink does with it.
+//! Customhouse lets the call through at all, not what the sink does with it.
 //!
 //! Calls are issued sequentially, awaiting each result, exactly as an agent
 //! does: the model cannot decide what to call next until it has seen the
@@ -25,10 +25,10 @@ type Client = rmcp::service::RunningService<rmcp::RoleClient, ()>;
 
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
-    let poisoned = std::env::var("PENSTOCK_POISONED_FILE").expect("run via the demo script");
+    let poisoned = std::env::var("CUSTOMHOUSE_POISONED_FILE").expect("run via the demo script");
 
     rule("SCENARIO A — a clean session may use sinks freely");
-    say("Penstock does not forbid sinks. It forbids sinks *after untrusted input*.");
+    say("Customhouse does not forbid sinks. It forbids sinks *after untrusted input*.");
     {
         let client = connect().await?;
         let sent = call(
@@ -87,14 +87,15 @@ async fn main() -> Result<(), BoxError> {
 }
 
 async fn connect() -> Result<Client, BoxError> {
-    let bin = std::env::var("PENSTOCK_BIN").unwrap_or_else(|_| "target/release/penstock".into());
-    let config = std::env::var("PENSTOCK_CONFIG").expect("run via the demo script");
+    let bin =
+        std::env::var("CUSTOMHOUSE_BIN").unwrap_or_else(|_| "target/release/customhouse".into());
+    let config = std::env::var("CUSTOMHOUSE_CONFIG").expect("run via the demo script");
     let mut command = tokio::process::Command::new(bin);
     command.args(["serve", "--config", &config]);
     Ok(().serve(TokioChildProcess::new(command)?).await?)
 }
 
-/// Require that Penstock refused a call, and show the reason it gave.
+/// Require that Customhouse refused a call, and show the reason it gave.
 fn assert_denied(tool: &str, outcome: Result<String, ServiceError>) -> Result<(), BoxError> {
     match outcome {
         Ok(text) => Err(format!(

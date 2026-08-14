@@ -1,12 +1,12 @@
 //! Self-protection invariants (DESIGN-v2.md §3).
 //!
 //! These are compiled into the binary and evaluated *before* any policy rule.
-//! They are derived from process facts (the Penstock home directory, the running
-//! binary) and never from `penstock.toml` or any upstream input — an agent must
-//! not be able to disarm Penstock through the very surface Penstock mediates.
+//! They are derived from process facts (the Customhouse home directory, the running
+//! binary) and never from `customhouse.toml` or any upstream input — an agent must
+//! not be able to disarm Customhouse through the very surface Customhouse mediates.
 //!
 //! This module implements the mediated-`tools/call` half of I1/I2: a call is
-//! denied if any of its path-like arguments resolves onto Penstock's own files.
+//! denied if any of its path-like arguments resolves onto Customhouse's own files.
 //! The decision is a pure function of `(arguments, filesystem state)`: it reads
 //! the local filesystem to canonicalize paths (as §3 requires — symlinks must be
 //! resolved) but makes no network or model call and introduces no nondeterminism.
@@ -30,7 +30,7 @@
 //!
 //! Also not caught, because the check is path-based: **inode aliases**. Resolution
 //! follows symlinks, but a hardlink to a protected file — or a bind mount of the
-//! Penstock home — yields a path outside every protected root. Making such an
+//! Customhouse home — yields a path outside every protected root. Making such an
 //! alias *through a mediated call* is itself denied, so exploiting this needs
 //! out-of-band filesystem access: the malicious-host case §3 puts out of scope.
 
@@ -40,15 +40,15 @@ use rmcp::model::CallToolRequestParams;
 use serde_json::Value;
 
 use crate::decision::{Assessment, InvariantOutcome};
-use crate::paths::{penstock_home, resolve_path, resolve_target};
+use crate::paths::{customhouse_home, resolve_path, resolve_target};
 
 /// Client-facing denial reason. Deliberately generic: it names no path, so a
 /// tainted argument is never echoed back into the model's context (§7.6).
 /// Operator-facing detail (which path, which tool) belongs in the ledger.
 const DENY_REASON: &str =
-    "denied by Penstock self-protection: operation resolves onto Penstock's own files";
+    "denied by Customhouse self-protection: operation resolves onto Customhouse's own files";
 
-/// The resolved set of paths Penstock protects. Built once at startup; the
+/// The resolved set of paths Customhouse protects. Built once at startup; the
 /// contents come only from process facts, never from configuration values.
 #[derive(Debug, Clone)]
 pub struct Invariants {
@@ -60,14 +60,14 @@ pub struct Invariants {
 impl Invariants {
     /// Resolve the protected set from the environment and the running binary.
     ///
-    /// - the Penstock home directory (`PENSTOCK_HOME`, else `~/.penstock`), which
+    /// - the Customhouse home directory (`CUSTOMHOUSE_HOME`, else `~/.customhouse`), which
     ///   holds config, ledger, and pin store;
     /// - the running binary's containing directory (covers the binary itself);
     /// - the active config file, if one was loaded.
     pub fn resolve(config_path: Option<&Path>) -> Self {
         let mut roots = Vec::new();
 
-        roots.push(resolve_path(&penstock_home()));
+        roots.push(resolve_path(&customhouse_home()));
 
         if let Ok(exe) = std::env::current_exe() {
             let exe = resolve_path(&exe);
@@ -131,8 +131,8 @@ impl Invariants {
     }
 
     /// True if `resolved` is one of, or lives inside, a protected root. Uses
-    /// component-wise `starts_with`, so a sibling like `.penstock-evil` is *not*
-    /// treated as being inside `.penstock`.
+    /// component-wise `starts_with`, so a sibling like `.customhouse-evil` is *not*
+    /// treated as being inside `.customhouse`.
     fn is_protected(&self, resolved: &Path) -> bool {
         self.protected_roots
             .iter()
@@ -223,7 +223,7 @@ mod tests {
     #[test]
     fn denies_path_targeting_the_binary() {
         let bin_dir = tempfile::tempdir().unwrap();
-        let binary = bin_dir.path().join("penstock");
+        let binary = bin_dir.path().join("customhouse");
         fs::write(&binary, b"binary").unwrap();
         // Protect the binary's containing directory (I2).
         let invariants = Invariants::from_roots(vec![bin_dir.path().to_path_buf()]);
@@ -246,11 +246,11 @@ mod tests {
 
     #[test]
     fn allows_sibling_dir_sharing_a_name_prefix() {
-        // The prefix-collision case: `.penstock-evil` must NOT be seen as being
-        // inside `.penstock`. This is why the check is component-wise.
+        // The prefix-collision case: `.customhouse-evil` must NOT be seen as being
+        // inside `.customhouse`. This is why the check is component-wise.
         let base = tempfile::tempdir().unwrap();
-        let home = base.path().join("penstock");
-        let sibling = base.path().join("penstock-evil");
+        let home = base.path().join("customhouse");
+        let sibling = base.path().join("customhouse-evil");
         fs::create_dir(&home).unwrap();
         fs::create_dir(&sibling).unwrap();
         let invariants = Invariants::from_roots(vec![home]);
@@ -268,7 +268,7 @@ mod tests {
         let mut arguments = serde_json::Map::new();
         arguments.insert(
             "text".into(),
-            Value::String("hello through penstock".into()),
+            Value::String("hello through customhouse".into()),
         );
         let request = CallToolRequestParams::new("mock__echo").with_arguments(arguments);
         assert_eq!(invariants.evaluate(&request), InvariantOutcome::Allow);

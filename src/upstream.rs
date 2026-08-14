@@ -1,6 +1,6 @@
 //! Upstream MCP servers and the registry that aggregates them.
 //!
-//! Penstock spawns each configured upstream, connects as an MCP client over the
+//! Customhouse spawns each configured upstream, connects as an MCP client over the
 //! child's stdio, and merges their tools into one namespaced set. Tool calls
 //! from the client are routed back to the owning upstream under the tool's
 //! original name. Upstream errors are wrapped, never swallowed.
@@ -77,7 +77,7 @@ struct Route {
     server: String,
 }
 
-/// The aggregated view of all upstreams: the merged tool list Penstock exposes
+/// The aggregated view of all upstreams: the merged tool list Customhouse exposes
 /// and the routing table that maps each namespaced tool back to its owner.
 #[derive(Default)]
 pub struct Registry {
@@ -128,14 +128,16 @@ impl Registry {
             // Fail-safe, not fail-closed: if pins can't persist, next run re-pins
             // first-sight (it will not wrongly serve a mutated definition), but
             // rug-pull detection is degraded until the store is writable again.
-            eprintln!("penstock: failed to persist pin store (detection degraded next run): {e}");
+            eprintln!(
+                "customhouse: failed to persist pin store (detection degraded next run): {e}"
+            );
         }
         Ok((registry, events))
     }
 
     /// Insert the served tools (first-sight / unchanged) into the merged set and
     /// collect a [`MetadataEvent`] for each pin and each withhold. Withheld tools
-    /// are never inserted — Penstock does not serve a pinned definition while the
+    /// are never inserted — Customhouse does not serve a pinned definition while the
     /// upstream would execute the new one.
     ///
     /// Each tool arrives already carrying its own verdict, so there is no way to
@@ -192,7 +194,7 @@ impl Registry {
         &self.tools
     }
 
-    /// The upstream that owns a namespaced tool, if Penstock exposes it. Lets
+    /// The upstream that owns a namespaced tool, if Customhouse exposes it. Lets
     /// callers recover the server structurally instead of re-parsing the name.
     pub fn server_of(&self, namespaced_tool: &str) -> Option<&str> {
         self.routes.get(namespaced_tool).map(|r| r.server.as_str())
@@ -294,14 +296,14 @@ impl MetadataEvent {
         match &self.outcome {
             PinOutcome::FirstSight => Some(format!("pinned {tool}")),
             PinOutcome::Mutated { .. } => Some(format!(
-                "WITHHELD {tool} — definition changed since pinned; run `penstock repin {}` to accept",
+                "WITHHELD {tool} — definition changed since pinned; run `customhouse repin {}` to accept",
                 self.server,
             )),
             PinOutcome::VersionChanged {
                 pinned_version,
                 current_version,
             } => Some(format!(
-                "WITHHELD {tool} — upstream version changed {pinned_version:?} -> {current_version:?}; run `penstock repin {}`",
+                "WITHHELD {tool} — upstream version changed {pinned_version:?} -> {current_version:?}; run `customhouse repin {}`",
                 self.server,
             )),
             PinOutcome::Unchanged => None,
@@ -454,7 +456,7 @@ mod tests {
         );
         let summary = withheld.summary().expect("a withhold has a summary");
         assert!(summary.contains("WITHHELD web__send"));
-        assert!(summary.contains("penstock repin web"));
+        assert!(summary.contains("customhouse repin web"));
 
         let unchanged = MetadataEvent::new("web", "fetch".to_string(), PinOutcome::Unchanged);
         assert!(

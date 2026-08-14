@@ -85,7 +85,7 @@ impl FlowPolicy {
             SinkMode::RequireApproval => Decision::Escalate {
                 reason: format!(
                     "{reason}. An operator can approve this class for one retry \
-                     with `penstock approve {}`",
+                     with `customhouse approve {}`",
                     class.as_str()
                 ),
             },
@@ -104,14 +104,14 @@ impl FlowPolicy {
 /// Names the upstreams and call ids that tainted the session, and the sink class
 /// being blocked — never a byte of the content itself (§7.6). The model reads
 /// this error, so quoting the untrusted text here would re-inject the payload
-/// through Penstock's own mouth.
+/// through Customhouse's own mouth.
 fn explain(class: SinkClass, sources: &[TaintSource]) -> String {
     let origins: Vec<String> = sources
         .iter()
         .map(|s| format!("{} (call {})", s.server, s.call_id))
         .collect();
     format!(
-        "denied by Penstock flow policy: this session received untrusted content from {}, \
+        "denied by Customhouse flow policy: this session received untrusted content from {}, \
          so calls in the {} class are blocked for the rest of the session",
         origins.join(", "),
         class.as_str()
@@ -196,7 +196,7 @@ mod tests {
         let Decision::Escalate { reason } = &assessment.decision else {
             panic!("expected escalation, got {:?}", assessment.decision)
         };
-        assert!(reason.contains("penstock approve external_send"));
+        assert!(reason.contains("customhouse approve external_send"));
 
         // Other classes keep the hard default.
         let payment = policy.assess("bank__transfer_funds", &taint);

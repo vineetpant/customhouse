@@ -2,7 +2,7 @@
 //!
 //! Every mediated `tools/call` is recorded here — allowed and denied alike —
 //! from the single chokepoint in `proxy::call_tool`. The ledger lives at
-//! `<penstock-home>/ledger.jsonl`, inside the directory the §3 invariant gate
+//! `<customhouse-home>/ledger.jsonl`, inside the directory the §3 invariant gate
 //! already protects, so a mediated call cannot be steered into reading or
 //! truncating it (I-5 holds for free; the drift-catching test is below).
 //!
@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::decision::{Assessment, Decision, InvariantOutcome};
 use crate::flow::FlowAssessment;
-use crate::paths::penstock_home;
+use crate::paths::customhouse_home;
 use crate::pin::PinOutcome;
 use crate::session::TaintSource;
 
@@ -45,9 +45,9 @@ pub struct Ledger {
 }
 
 impl Ledger {
-    /// Open the ledger at `<penstock-home>/ledger.jsonl` (production).
+    /// Open the ledger at `<customhouse-home>/ledger.jsonl` (production).
     pub fn open() -> Self {
-        Self::open_in(&penstock_home())
+        Self::open_in(&customhouse_home())
     }
 
     /// Open the ledger under an explicit home directory (tests supply a tempdir).
@@ -57,7 +57,7 @@ impl Ledger {
             Ok(file) => Some(file),
             Err(e) => {
                 eprintln!(
-                    "penstock: ledger disabled — cannot open {}: {e}",
+                    "customhouse: ledger disabled — cannot open {}: {e}",
                     path.display()
                 );
                 None
@@ -229,13 +229,13 @@ impl Ledger {
         let mut line = match serde_json::to_string(entry) {
             Ok(line) => line,
             Err(e) => {
-                eprintln!("penstock: ledger serialize failed (call still proceeds): {e}");
+                eprintln!("customhouse: ledger serialize failed (call still proceeds): {e}");
                 return;
             }
         };
         line.push('\n');
         if let Err(e) = file.write_all(line.as_bytes()) {
-            eprintln!("penstock: ledger write failed (call still proceeds): {e}");
+            eprintln!("customhouse: ledger write failed (call still proceeds): {e}");
         }
     }
 }
@@ -404,7 +404,7 @@ mod tests {
         ledger.record_call(
             &call("fs__write", Some("/etc/x")),
             Some("fs"),
-            &deny("/home/u/.penstock/secret"),
+            &deny("/home/u/.customhouse/secret"),
         );
 
         let entries = read_entries(ledger.path());
@@ -422,7 +422,7 @@ mod tests {
 
         assert_eq!(entries[1]["decision"], "deny");
         assert_eq!(entries[1]["server"], "fs");
-        assert_eq!(entries[1]["detail"], "/home/u/.penstock/secret");
+        assert_eq!(entries[1]["detail"], "/home/u/.customhouse/secret");
         assert_eq!(entries[1]["id"], 1);
     }
 

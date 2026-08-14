@@ -5,7 +5,7 @@
 //!
 //! ## Why session-scoped, and what that costs
 //!
-//! Penstock sits at the tool boundary, so it can see *what entered the model's
+//! Customhouse sits at the tool boundary, so it can see *what entered the model's
 //! context* and *what the model asked for next* — but nothing about how the
 //! model mixed them. Per-variable information flow is therefore not available at
 //! this vantage point, and claiming it would be a lie.

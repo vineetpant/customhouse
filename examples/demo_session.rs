@@ -1,8 +1,8 @@
-//! Scripted live demo session, driven as a real MCP client against Penstock.
+//! Scripted live demo session, driven as a real MCP client against Customhouse.
 //!
 //! Run it through `./demo/run.sh`, which builds the binaries, points
-//! `PENSTOCK_HOME` at a throwaway temp directory, and sets `PENSTOCK_BIN` /
-//! `PENSTOCK_CONFIG`. This example spawns `penstock serve` (which in turn spawns
+//! `CUSTOMHOUSE_HOME` at a throwaway temp directory, and sets `CUSTOMHOUSE_BIN` /
+//! `CUSTOMHOUSE_CONFIG`. This example spawns `customhouse serve` (which in turn spawns
 //! the mock upstream), then runs a fixed sequence of calls and narrates each.
 //!
 //! Nothing here is faked: every line of output is a real response from the real
@@ -19,43 +19,43 @@ type BoxError = Box<dyn Error + Send + Sync>;
 
 #[tokio::main]
 async fn main() -> Result<(), BoxError> {
-    let bin = env_or("PENSTOCK_BIN", "target/release/penstock");
-    let config = env_or("PENSTOCK_CONFIG", "demo/penstock.toml");
-    let home = std::env::var("PENSTOCK_HOME")
-        .expect("PENSTOCK_HOME must be set — run this via ./demo/run.sh");
+    let bin = env_or("CUSTOMHOUSE_BIN", "target/release/customhouse");
+    let config = env_or("CUSTOMHOUSE_CONFIG", "demo/customhouse.toml");
+    let home = std::env::var("CUSTOMHOUSE_HOME")
+        .expect("CUSTOMHOUSE_HOME must be set — run this via ./demo/run.sh");
 
-    rule("Penstock — a normal call routes through; a self-attack is blocked");
+    rule("Customhouse — a normal call routes through; a self-attack is blocked");
 
-    // Connect to Penstock. Spawning `penstock serve` starts the proxy, which
-    // spawns the mock upstream behind it; both inherit PENSTOCK_HOME.
+    // Connect to Customhouse. Spawning `customhouse serve` starts the proxy, which
+    // spawns the mock upstream behind it; both inherit CUSTOMHOUSE_HOME.
     step(
         "initialize",
-        "connecting to Penstock (it is proxying the mock upstream)",
+        "connecting to Customhouse (it is proxying the mock upstream)",
     );
     let mut command = tokio::process::Command::new(&bin);
     command.args(["serve", "--config", &config]);
     let client = ().serve(TokioChildProcess::new(command)?).await?;
     ok("connected; MCP protocol negotiated");
 
-    // What does Penstock expose? The upstream's tools, namespaced.
-    step("tools/list", "what does Penstock expose to the client?");
+    // What does Customhouse expose? The upstream's tools, namespaced.
+    step("tools/list", "what does Customhouse expose to the client?");
     for tool in client.list_all_tools().await? {
         ok(&format!(
-            "{}   (the upstream's `echo`, namespaced by Penstock)",
+            "{}   (the upstream's `echo`, namespaced by Customhouse)",
             tool.name
         ));
     }
 
     // A normal call: routes to the upstream and comes back.
     rule("ALLOWED: a normal call routes through to the upstream");
-    let echoed = call_echo(&client, "hello through Penstock").await?;
+    let echoed = call_echo(&client, "hello through Customhouse").await?;
     ok(&format!("mock__echo returned: {echoed:?}"));
 
-    // A self-attack: the model steers a tool at Penstock's own ledger file.
-    rule("DENIED: self-protection blocks a call targeting Penstock's own files");
+    // A self-attack: the model steers a tool at Customhouse's own ledger file.
+    rule("DENIED: self-protection blocks a call targeting Customhouse's own files");
     let ledger_path = format!("{home}/ledger.jsonl");
     say(&format!(
-        "the model asks mock__echo to touch Penstock's own ledger:\n    {ledger_path}"
+        "the model asks mock__echo to touch Customhouse's own ledger:\n    {ledger_path}"
     ));
     match call_echo(&client, &ledger_path).await {
         Ok(_) => panic!("self-protection regressed: the attack was NOT blocked"),

@@ -1,4 +1,4 @@
-//! Penstock configuration: the set of upstream MCP servers to aggregate.
+//! Customhouse configuration: the set of upstream MCP servers to aggregate.
 //!
 //! Configuration is loaded once at startup and never re-read mid-flight, so a
 //! change to the running policy always requires an action outside the mediated
@@ -10,11 +10,11 @@ use std::path::Path;
 use crate::sink::{SinkClass, SinkRule};
 
 /// The separator between an upstream's name and a tool's own name in the
-/// namespaced identifier Penstock exposes to the client (`web__fetch`). Upstream
+/// namespaced identifier Customhouse exposes to the client (`web__fetch`). Upstream
 /// names may not contain it, so routing can split on the first occurrence.
 pub const NAMESPACE_SEP: &str = "__";
 
-/// Top-level configuration, deserialized from `penstock.toml`.
+/// Top-level configuration, deserialized from `customhouse.toml`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -69,7 +69,7 @@ impl TrustClass {
     }
 }
 
-/// What Penstock does when a tainted session reaches a sink, per sink class.
+/// What Customhouse does when a tainted session reaches a sink, per sink class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SinkMode {
@@ -105,7 +105,7 @@ impl FlowConfig {
     }
 }
 
-/// Reasons a configuration is rejected. Penstock fails closed on any of them.
+/// Reasons a configuration is rejected. Customhouse fails closed on any of them.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("failed to read config file: {0}")]

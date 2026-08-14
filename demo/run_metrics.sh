@@ -5,5 +5,5 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 DEMO_ROOT="$(mktemp -d)"
 trap 'rm -rf "$DEMO_ROOT"' EXIT
-export PENSTOCK_HOME="$DEMO_ROOT/home"
+export CUSTOMHOUSE_HOME="$DEMO_ROOT/home"
 cargo run --release --quiet --example metrics

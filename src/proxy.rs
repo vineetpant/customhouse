@@ -1,6 +1,6 @@
 //! The aggregating MCP proxy — the composition root and the enforcement point.
 //!
-//! `PenstockProxy` presents Penstock to the client as a single MCP server that
+//! `CustomhouseProxy` presents Customhouse to the client as a single MCP server that
 //! exposes the merged, namespaced tools of its upstream servers and routes each
 //! call back to the owning upstream. Enforcement happens in two places:
 //!
@@ -39,13 +39,13 @@ use crate::sink::SinkMap;
 use crate::upstream::{CallError, Registry, UpstreamError};
 use tokio::sync::Mutex;
 
-/// Penstock presented to the client as a single aggregating MCP server.
+/// Customhouse presented to the client as a single aggregating MCP server.
 ///
 /// Cheap to clone: the shared registry of upstream connections and the resolved
 /// self-protection invariants live behind `Arc`s, so the proxy can be handed to
 /// the MCP service by value.
 #[derive(Clone)]
-pub struct PenstockProxy {
+pub struct CustomhouseProxy {
     registry: Arc<Registry>,
     invariants: Arc<Invariants>,
     ledger: Arc<Ledger>,
@@ -67,7 +67,7 @@ pub struct PenstockProxy {
     approvals: Arc<Mutex<ApprovalStore>>,
 }
 
-impl PenstockProxy {
+impl CustomhouseProxy {
     /// A proxy with no upstreams; advertises an empty tool set. Self-protection
     /// invariants are still resolved so the gate is never absent. The ledger is
     /// disabled here (this constructor is for tests that never route calls).
@@ -86,7 +86,7 @@ impl PenstockProxy {
     ///
     /// `config_path` is the file `config` was loaded from, if any; it is added
     /// to the protected set so a mediated call cannot rewrite it. The ledger and
-    /// the invariant gate both resolve the same Penstock home, so the ledger is
+    /// the invariant gate both resolve the same Customhouse home, so the ledger is
     /// written inside the directory the gate protects (I-5).
     pub async fn connect(
         config: &Config,
@@ -99,7 +99,7 @@ impl PenstockProxy {
         // the audit record.
         for event in &events {
             if let Some(summary) = event.summary() {
-                eprintln!("penstock: {summary}");
+                eprintln!("customhouse: {summary}");
             }
             ledger.record_metadata(&event.server, &event.qualified_tool(), &event.outcome);
         }
@@ -121,17 +121,17 @@ impl PenstockProxy {
         self.registry.tools().len()
     }
 
-    /// The identity Penstock presents to clients on initialize.
+    /// The identity Customhouse presents to clients on initialize.
     pub fn server_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             // MCP 2025-11-25 (ProtocolVersion::LATEST in rmcp 2.2.0).
             .with_protocol_version(ProtocolVersion::LATEST)
-            .with_server_info(Implementation::new("penstock", crate::version()))
-            .with_instructions("Penstock: a deterministic proxy over your MCP servers.")
+            .with_server_info(Implementation::new("customhouse", crate::version()))
+            .with_instructions("Customhouse: a deterministic proxy over your MCP servers.")
     }
 }
 
-impl ServerHandler for PenstockProxy {
+impl ServerHandler for CustomhouseProxy {
     fn get_info(&self) -> ServerInfo {
         self.server_info()
     }
@@ -146,7 +146,7 @@ impl ServerHandler for PenstockProxy {
         ))
     }
 
-    // Surfaces Penstock does not mediate yet are refused explicitly. The default
+    // Surfaces Customhouse does not mediate yet are refused explicitly. The default
     // handlers for the `list_*` methods answer with an *empty* result, which
     // would tell the client "this server has no resources" — hiding whatever the
     // upstreams really expose and misrepresenting what is being protected. A
@@ -210,7 +210,7 @@ impl ServerHandler for PenstockProxy {
             .ledger
             .record_call(&request, server.as_deref(), &assessment);
         if let InvariantOutcome::Deny { reason } = assessment.outcome {
-            eprintln!("penstock: self-protection denied tool `{tool}`");
+            eprintln!("customhouse: self-protection denied tool `{tool}`");
             return Err(McpError::invalid_params(reason, None));
         }
 
@@ -226,7 +226,7 @@ impl ServerHandler for PenstockProxy {
         match flow.decision {
             Decision::Allow => {}
             Decision::Deny { reason } => {
-                eprintln!("penstock: flow policy denied sink `{tool}`");
+                eprintln!("customhouse: flow policy denied sink `{tool}`");
                 return Err(McpError::invalid_params(reason, None));
             }
             Decision::Escalate { reason } => {
@@ -239,7 +239,7 @@ impl ServerHandler for PenstockProxy {
                 let outcome = approvals.consume(class, approval::now_ms());
                 let granted = matches!(outcome, ApprovalOutcome::Granted);
                 if let Err(e) = approvals.save() {
-                    eprintln!("penstock: failed to persist approval use: {e}");
+                    eprintln!("customhouse: failed to persist approval use: {e}");
                 }
                 self.ledger.record_approval(class.as_str(), granted);
 
@@ -248,10 +248,10 @@ impl ServerHandler for PenstockProxy {
                         ApprovalOutcome::Expired => " A previous approval had expired.",
                         _ => "",
                     };
-                    eprintln!("penstock: flow policy escalated sink `{tool}` for approval");
+                    eprintln!("customhouse: flow policy escalated sink `{tool}` for approval");
                     return Err(McpError::invalid_params(format!("{reason}.{note}"), None));
                 }
-                eprintln!("penstock: operator approval spent for `{tool}`");
+                eprintln!("customhouse: operator approval spent for `{tool}`");
             }
         }
 
@@ -284,17 +284,17 @@ impl ServerHandler for PenstockProxy {
     }
 }
 
-/// The error returned for an MCP surface Penstock does not yet mediate.
+/// The error returned for an MCP surface Customhouse does not yet mediate.
 ///
 /// Uses the protocol's method-not-found code, but with a message that says *why*
-/// — an operator who points Penstock at a resource-exposing server should learn
+/// — an operator who points Customhouse at a resource-exposing server should learn
 /// that those resources are being withheld deliberately, not conclude the server
 /// is broken or empty.
 fn unmediated(surface: &str) -> McpError {
     McpError::new(
         ErrorCode::METHOD_NOT_FOUND,
         format!(
-            "penstock does not mediate {surface} yet and will not pass them through \
+            "customhouse does not mediate {surface} yet and will not pass them through \
              unchecked; only tools are mediated in this release"
         ),
         None,
@@ -315,13 +315,13 @@ pub enum ServeError {
     Wait(#[from] tokio::task::JoinError),
 }
 
-/// Serve Penstock as an MCP server over stdio until the client disconnects.
+/// Serve Customhouse as an MCP server over stdio until the client disconnects.
 ///
 /// stdout carries the MCP protocol; all logging must go to stderr.
 pub async fn serve_stdio(config: Config, config_path: Option<&Path>) -> Result<(), ServeError> {
-    let proxy = PenstockProxy::connect(&config, config_path).await?;
+    let proxy = CustomhouseProxy::connect(&config, config_path).await?;
     eprintln!(
-        "penstock {}: aggregating {} upstream(s), exposing {} tool(s)",
+        "customhouse {}: aggregating {} upstream(s), exposing {} tool(s)",
         crate::version(),
         config.upstreams.len(),
         proxy.tool_count(),
@@ -339,27 +339,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn presents_as_penstock() {
-        let info = PenstockProxy::empty().server_info();
-        assert_eq!(info.server_info.name, "penstock");
+    fn presents_as_customhouse() {
+        let info = CustomhouseProxy::empty().server_info();
+        assert_eq!(info.server_info.name, "customhouse");
         assert_eq!(info.server_info.version, crate::version());
     }
 
     #[test]
     fn negotiates_supported_protocol_version() {
-        let info = PenstockProxy::empty().server_info();
+        let info = CustomhouseProxy::empty().server_info();
         assert_eq!(info.protocol_version, ProtocolVersion::V_2025_11_25);
     }
 
     #[test]
     fn advertises_tools_capability() {
-        let info = PenstockProxy::empty().server_info();
+        let info = CustomhouseProxy::empty().server_info();
         assert!(info.capabilities.tools.is_some());
     }
 
     #[test]
     fn empty_proxy_exposes_no_tools() {
-        assert_eq!(PenstockProxy::empty().tool_count(), 0);
+        assert_eq!(CustomhouseProxy::empty().tool_count(), 0);
     }
 
     #[test]
@@ -382,7 +382,7 @@ mod tests {
     fn capabilities_advertise_only_what_is_mediated() {
         // Capabilities and refusals must agree: we advertise tools, so we must
         // not also be advertising surfaces the handlers refuse.
-        let info = PenstockProxy::empty().server_info();
+        let info = CustomhouseProxy::empty().server_info();
         assert!(info.capabilities.tools.is_some(), "tools are mediated");
         assert!(
             info.capabilities.resources.is_none(),

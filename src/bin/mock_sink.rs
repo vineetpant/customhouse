@@ -3,7 +3,7 @@
 //!
 //! It exposes `send_email` and `transfer_funds` — an external send and a money
 //! movement. Both simply report what they would have done: the point of the
-//! demo is whether Penstock lets the call through at all, so the tool doing
+//! demo is whether Customhouse lets the call through at all, so the tool doing
 //! nothing real is a feature.
 //!
 //! The taint *source* in the demos is a real MCP server; only this sink side is
