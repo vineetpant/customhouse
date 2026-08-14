@@ -3,4 +3,4 @@
 # Customhouse. Real deployments point `command` at a real MCP server binary.
 [[upstream]]
 name = "mock"
-command = "target/release/mock_upstream"
+command = "target/release/examples/mock_upstream"

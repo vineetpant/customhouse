@@ -20,7 +20,7 @@ if ! command -v npx >/dev/null 2>&1; then
 fi
 
 echo "Building customhouse (release)…"
-cargo build --release --quiet
+cargo build --release --quiet --bin customhouse --example mock_upstream --example mock_sink
 
 DEMO_ROOT="$(mktemp -d)"
 trap 'rm -rf "$DEMO_ROOT"' EXIT
@@ -56,7 +56,7 @@ trust = "untrusted"
 
 [[upstream]]
 name = "mail"
-command = "$(pwd)/target/release/mock_sink"
+command = "$(pwd)/target/release/examples/mock_sink"
 trust = "trusted"
 EOF
 

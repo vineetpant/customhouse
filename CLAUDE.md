@@ -57,8 +57,11 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
   `ledger` and `flow` (the R3 rule) depend only on leaves; `upstream`
   (`Registry`, routing, pinning, trust) depends on `config` + `pin`; `proxy`
   composes everything and owns the chokepoint. `invariant`, `ledger`, `flow` and
-  `upstream` must not import each other. `bin/mock_upstream`, `bin/mock_sink`
-  and the `examples/` sessions are network-free fixtures.
+  `upstream` must not import each other. Everything under `examples/` is a
+  fixture, never product surface: `mock_upstream` and `mock_sink` are stand-in
+  MCP servers, the `*_session` files drive the demos. They live in `examples/`
+  rather than `src/bin/` precisely so `cargo install` does not put them on a
+  user's PATH — do not move them back.
 - **rmcp 2.2.0 patterns are already verified in-tree** — copy from `proxy.rs` /
   `upstream.rs` rather than re-deriving; read crate source in the registry cache
   before using an unverified API.

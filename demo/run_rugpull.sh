@@ -7,7 +7,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 echo "Building customhouse (release)…"
-cargo build --release --quiet
+cargo build --release --quiet --bin customhouse --example mock_upstream --example mock_sink
 
 DEMO_ROOT="$(mktemp -d)"
 trap 'rm -rf "$DEMO_ROOT"' EXIT
