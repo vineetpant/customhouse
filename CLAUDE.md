@@ -88,6 +88,12 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
 - Work in small, individually testable chunks; **commit each working chunk.**
 - **Write tests alongside code and run them yourself before telling me a chunk is done.**
 - **Never claim something works without running it.**
+- **Post-tag, nothing ships without explicit approval.** Once a version is
+  tagged and published, the bar changes: propose the change, explain the options
+  and trade-offs, and **wait for a decision before writing any code**. Published
+  versions are permanent — crates.io can yank but never delete — so a fix that
+  seemed obvious in the moment becomes part of the record. This applies to code,
+  config, docs and release metadata alike.
 - **Reviews are comments, not commits.** A reviewer records findings (e.g. a
   committed `REVIEW.md`) and stops; the implementer applies them and deletes the
   file. The reviewer does not push fixes directly.
