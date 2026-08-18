@@ -7,6 +7,7 @@
 pub mod approval;
 pub mod config;
 pub mod decision;
+pub mod destination;
 pub mod flow;
 pub mod invariant;
 pub mod ledger;

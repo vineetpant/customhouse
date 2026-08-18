@@ -47,6 +47,24 @@ pub struct UpstreamConfig {
     /// admitting its content as clean.
     #[serde(default)]
     pub trust: TrustClass,
+    /// Which field of this server's *results* asserts who authored the content
+    /// (e.g. `"from"` on a ticket or mail server).
+    ///
+    /// Read structurally from the result, never by searching content: an
+    /// attacker who can write a message body must not be able to forge the
+    /// value that authorises a reply (§17.2). Absent means no author is ever
+    /// known for this upstream, so destination classification never fires and
+    /// the stricter session rule stands.
+    #[serde(default)]
+    pub author_field: Option<String>,
+    /// Which argument names of this server's *sink tools* carry recipients
+    /// (e.g. `["to", "cc", "bcc"]`).
+    ///
+    /// Declared rather than guessed: inferring which argument is the recipient
+    /// risks authorising on a field the attacker chose. Absent means recipients
+    /// cannot be identified, so the exemption never fires (§17.4).
+    #[serde(default)]
+    pub recipient_fields: Vec<String>,
 }
 
 /// Whether content returned by an upstream is trusted input.
