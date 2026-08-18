@@ -15,7 +15,7 @@ The proxy sits in front of all your MCP servers. Each upstream is declared trust
 
 That's the whole mechanism. No model in the decision path, no pattern matching, no content inspection at all. The decision is a pure function of where data came from.
 
-The appeal is that it can't be evaded by rewriting the payload. Signature-based detection has to be updated forever and still misses the attack nobody wrote a rule for. Provenance doesn't care how the injection is worded, encoded, translated or summarised — if the session touched an untrusted source, the sink is closed.
+The appeal is that it can't be evaded by rewriting the payload. Signature-based detection has to be updated forever and still misses the attack nobody wrote a rule for. Provenance doesn't care how the injection is worded, encoded, translated or summarised: if the session touched an untrusted source, the sink is closed.
 
 The cost is that provenance is a coarse signal. Which brings us to the 40%.
 
@@ -27,7 +27,7 @@ All four blocked workflows involved genuine untrusted-to-sink data flow. The pro
 
 What made them legitimate was not the data. It was the destination.
 
-The clearest case: an agent reads a support ticket (untrusted — a stranger wrote it), then sends a reply. Untrusted content in, external send out. That is exactly the shape of an exfiltration attack. The only thing distinguishing it is that the reply goes back to the person who wrote the ticket.
+The clearest case: an agent reads a support ticket (untrusted, because a stranger wrote it), then sends a reply. Untrusted content in, external send out. That is exactly the shape of an exfiltration attack. The only thing distinguishing it is that the reply goes back to the person who wrote the ticket.
 
 At the tool boundary, those two situations are identical. Same source, same sink, same data flow. The difference lives entirely in who receives it.
 
@@ -39,7 +39,7 @@ Going through the four cases killed that idea. Fingerprinting would have confirm
 
 The fix has to be destination classification: distinguishing a reply going back to the author of the untrusted content from a third-party recipient introduced by that content.
 
-And that distinction has a trap in it. The naive version — "recipient appeared in the untrusted input, so it's fine" — is exactly backwards for the classic exfiltration shape, where the attacker embeds their own address in the poisoned content and the agent sends data there. The rule has to be that the recipient is the *author* of the tainted artifact, checked structurally against the sender field, not merely that the recipient appears somewhere in it. Get that boundary wrong and the false-positive fix becomes the vulnerability.
+And that distinction has a trap in it. The naive version, "recipient appeared in the untrusted input, so it's fine", is exactly backwards for the classic exfiltration shape, where the attacker embeds their own address in the poisoned content and the agent sends data there. The rule has to be that the recipient is the *author* of the tainted artifact, checked structurally against the sender field, not merely that the recipient appears somewhere in it. Get that boundary wrong and the false-positive fix becomes the vulnerability.
 
 ## The per-class breakdown
 
@@ -59,10 +59,10 @@ Those defaults are measured rather than guessed, which I think is the actual arg
 
 ## What I'd tell anyone building this
 
-Publish both numbers. A block rate on its own is unfalsifiable — every guard blocks everything if you don't measure what else it blocks. The tools I surveyed publish neither.
+Publish both numbers. A block rate on its own is unfalsifiable: every guard blocks everything if you don't measure what else it blocks. The tools I surveyed publish neither.
 
 Then read your own false positives individually rather than treating them as a rate to optimise. The rate told me my approach was too coarse. The four cases told me *which* refinement would help and which one I'd have wasted a month on.
 
 The proxy is Rust, Apache-2.0, and the scenario suite regenerates both numbers with one script: [github.com/vineetpant/customhouse](https://github.com/vineetpant/customhouse)
 
-I'm most interested in failure modes I haven't found — particularly whether untrusted content can be laundered through a trusted server so the session never gets tainted at all.
+I'm most interested in failure modes I haven't found, particularly whether untrusted content can be laundered through a trusted server so the session never gets tainted at all.
