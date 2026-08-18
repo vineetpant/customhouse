@@ -11,7 +11,7 @@ untrusted content. No model sits in the decision path, and no payload is ever
 pattern-matched — the block follows from provenance alone, so it cannot be
 evaded by rewording, summarising or base64-ing the payload.
 
-> **v0.2.0 is a working reference monitor with measured results — use it
+> **v0.2.1 is a working reference monitor with measured results — use it
 > locally, read the numbers, break it. It is not yet a production exfiltration
 > guarantee, and [`SECURITY.md`](./SECURITY.md) says exactly where the line is.**
 
@@ -185,7 +185,7 @@ one place where the decision happens.
 
 **Deterministic, and fully Apache-2.0.** No model in the decision path, so
 verdicts are reproducible and testable — the enforcement logic is covered by 84
-unit tests, a measured scenario suite, and five demos that assert their own
+unit tests, a measured scenario suite, and four demos that assert their own
 security properties. No open-core tier, no license key, no source-available
 split: for something sitting in your enforcement path, being able to read and
 fork all of it is a security property.
@@ -196,7 +196,11 @@ discover.
 
 ## Install
 
-Build from source:
+```sh
+cargo install customhouse
+```
+
+Or build from source:
 
 ```sh
 git clone https://github.com/vineetpant/customhouse && cd customhouse
@@ -260,8 +264,12 @@ Run `customhouse --help` for the full CLI.
 ## Documentation
 
 - [`DESIGN-v2.md`](./DESIGN-v2.md) — full design and threat model
-- [`SECURITY.md`](./SECURITY.md) — what v0.1.0 defends against, what it does not,
+- [`SECURITY.md`](./SECURITY.md) — what v0.2.1 defends against, what it does not,
   and the limitations that will not be closed (with reasons)
+
+## Writing
+
+- [Blocking prompt injection deterministically costs 40% false positives. Here's what they actually were.](https://vineetpant.github.io/customhouse/false-positives/)
 
 ## License
 
