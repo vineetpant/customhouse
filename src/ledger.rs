@@ -149,6 +149,12 @@ impl Ledger {
             return; // not a sink; the call record already covers it
         };
         let outcome = match assessment.decision {
+            // An allow granted by the destination rule is a distinct outcome, not
+            // an ordinary allow: it is the compensating control for the residual
+            // channel in §17.6, and the operator must be able to find every use
+            // of it. Because `record_flow` runs before the decision is acted on,
+            // the exemption cannot be granted without this line executing.
+            Decision::Allow if assessment.exemption.is_some() => FlowOutcome::AllowedByAuthorMatch,
             Decision::Allow => FlowOutcome::Allowed,
             Decision::Deny { .. } => FlowOutcome::Blocked,
             Decision::Escalate { .. } => FlowOutcome::Escalated,
@@ -165,6 +171,17 @@ impl Ledger {
                 .iter()
                 .map(|s| format!("{}:{}", s.server, s.call_id))
                 .collect(),
+            matched_author: assessment.exemption.as_ref().map(|e| e.author.clone()),
+            agreeing_sources: assessment
+                .exemption
+                .as_ref()
+                .map(|e| {
+                    e.agreeing_sources
+                        .iter()
+                        .map(|s| format!("{}:{}", s.server, s.call_id))
+                        .collect()
+                })
+                .unwrap_or_default(),
         });
     }
 
@@ -319,12 +336,23 @@ struct FlowEntry {
     /// `server:call_id` for every taint source cited.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tainted_by: Vec<String>,
+    /// The author every recipient matched, when the destination rule allowed
+    /// the call (§17.5).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    matched_author: Option<String>,
+    /// The full set of taint sources that agreed on that author, recorded whole
+    /// so a later per-source refinement can reconstruct this decision.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    agreeing_sources: Vec<String>,
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
 enum FlowOutcome {
     Allowed,
+    /// Allowed only because every recipient was the author of the tainted
+    /// content. Distinct from `Allowed` so uses of the exemption are findable.
+    AllowedByAuthorMatch,
     Blocked,
     Escalated,
 }
@@ -503,6 +531,48 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("pinned=old"));
+    }
+
+    #[test]
+    fn an_exemption_cannot_be_granted_without_leaving_evidence() {
+        // The compensating control for DESIGN-v2.md §17.6. `record_flow` runs
+        // before the decision is acted on, so if this event were ever absent the
+        // exemption would be silent — which is indistinguishable from having no
+        // enforcement at all.
+        use crate::flow::{Exemption, FlowAssessment};
+        use crate::session::TaintSource;
+
+        let home = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open_in(home.path());
+
+        let source = TaintSource {
+            server: "desk".into(),
+            tool: "desk__read_ticket".into(),
+            call_id: 3,
+            author: Some("customer@example.com".into()),
+        };
+        let assessment = FlowAssessment {
+            decision: Decision::Allow,
+            sink_class: Some(crate::sink::SinkClass::ExternalSend),
+            taint_sources: vec![source.clone()],
+            exemption: Some(Exemption {
+                author: "customer@example.com".into(),
+                agreeing_sources: vec![source],
+            }),
+        };
+        ledger.record_flow("mail__send_email", &assessment);
+
+        let entries = read_entries(ledger.path());
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0]["outcome"], "allowedbyauthormatch",
+            "an author-match allow must be distinguishable from an ordinary allow"
+        );
+        assert_eq!(entries[0]["matched_author"], "customer@example.com");
+        assert_eq!(
+            entries[0]["agreeing_sources"][0], "desk:3",
+            "the whole agreeing set is recorded for later refinement"
+        );
     }
 
     #[test]

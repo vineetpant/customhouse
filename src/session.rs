@@ -34,6 +34,13 @@ pub struct TaintSource {
     pub tool: String,
     /// Ledger id of the call, so the full record can be looked up.
     pub call_id: u64,
+    /// Who the source *asserted* authored this content, if the upstream declared
+    /// an author field and the result carried a usable value (§17.3).
+    ///
+    /// This is the only value permitted to authorise a reply. It is read from a
+    /// declared structured field, never found by searching the body — an
+    /// attacker who writes the body must not be able to forge it.
+    pub author: Option<String>,
 }
 
 /// Accumulated taint for one session.
@@ -74,6 +81,26 @@ impl SessionTaint {
     pub fn tainting_servers(&self) -> BTreeSet<&str> {
         self.sources.iter().map(|s| s.server.as_str()).collect()
     }
+
+    /// The asserted authors of every taint source that carried one.
+    ///
+    /// A source with no author contributes nothing, which makes the set
+    /// *smaller* rather than more permissive — but see `all_sources_have_authors`:
+    /// an exemption also requires that no source is missing one.
+    pub fn authors(&self) -> Vec<String> {
+        self.sources
+            .iter()
+            .filter_map(|s| s.author.clone())
+            .collect()
+    }
+
+    /// Whether every taint source asserted an author.
+    ///
+    /// If even one source is anonymous, its content could reach a recipient who
+    /// did not write it, so the exemption must not fire (§17.4).
+    pub fn all_sources_have_authors(&self) -> bool {
+        !self.sources.is_empty() && self.sources.iter().all(|s| s.author.is_some())
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +112,7 @@ mod tests {
             server: server.to_string(),
             tool: tool.to_string(),
             call_id,
+            author: None,
         }
     }
 

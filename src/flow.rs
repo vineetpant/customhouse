@@ -30,8 +30,21 @@
 
 use crate::config::{FlowConfig, SinkMode};
 use crate::decision::Decision;
+use crate::destination::{self, DestinationVerdict};
 use crate::session::{SessionTaint, TaintSource};
 use crate::sink::{SinkClass, SinkMap};
+
+/// What the proxy could determine about who this call sends to.
+///
+/// `declared` records whether the sink upstream configured `recipient_fields`
+/// at all. Undeclared is not the same as empty: undeclared means we cannot
+/// identify recipients and must not relax, which is why it is tracked
+/// separately rather than inferred from an empty list.
+#[derive(Debug, Clone, Default)]
+pub struct CallRecipients {
+    pub declared: bool,
+    pub values: Vec<String>,
+}
 
 /// The operator-side result of the flow rule: the client-facing decision plus
 /// the provenance that justified it, for the ledger.
@@ -42,6 +55,25 @@ pub struct FlowAssessment {
     pub sink_class: Option<SinkClass>,
     /// The taint sources cited, empty when the call was allowed.
     pub taint_sources: Vec<TaintSource>,
+    /// Present when the call was allowed *only* because every recipient was the
+    /// author of the tainted content (§17).
+    ///
+    /// This is the compensating control for the residual channel in §17.6, so it
+    /// travels inside the assessment rather than alongside it: the ledger
+    /// records whatever the assessment says, and the assessment is written
+    /// before the decision is acted on. An exemption therefore cannot be granted
+    /// without the evidence being emitted.
+    pub exemption: Option<Exemption>,
+}
+
+/// Evidence that the destination rule relaxed a block.
+#[derive(Debug, Clone)]
+pub struct Exemption {
+    /// The author every recipient matched.
+    pub author: String,
+    /// Every taint source that agreed on that author — the whole set, so a
+    /// future per-source refinement can reconstruct the decision (§17.5).
+    pub agreeing_sources: Vec<TaintSource>,
 }
 
 impl FlowAssessment {
@@ -50,6 +82,7 @@ impl FlowAssessment {
             decision: Decision::Allow,
             sink_class,
             taint_sources: Vec::new(),
+            exemption: None,
         }
     }
 }
@@ -67,7 +100,12 @@ impl FlowPolicy {
     }
 
     /// Evaluate one call against the session's accumulated taint.
-    pub fn assess(&self, namespaced_tool: &str, taint: &SessionTaint) -> FlowAssessment {
+    pub fn assess(
+        &self,
+        namespaced_tool: &str,
+        taint: &SessionTaint,
+        recipients: &CallRecipients,
+    ) -> FlowAssessment {
         let Some(class) = self.sinks.classify(namespaced_tool) else {
             // Not a sink: nothing to enforce. Reads stay unblocked so a tainted
             // session can still do useful work.
@@ -79,6 +117,26 @@ impl FlowPolicy {
         }
 
         let sources: Vec<TaintSource> = taint.sources().cloned().collect();
+
+        // Destination classification (§17), external_send only. Money movement
+        // and egress showed no measured false positives, so widening the
+        // exemption to them would add attack surface to buy nothing.
+        if class == SinkClass::ExternalSend && taint.all_sources_have_authors() {
+            let verdict =
+                destination::classify(&taint.authors(), recipients.declared, &recipients.values);
+            if let DestinationVerdict::AuthorOnly { author } = verdict {
+                return FlowAssessment {
+                    decision: Decision::Allow,
+                    sink_class: Some(class),
+                    taint_sources: sources.clone(),
+                    exemption: Some(Exemption {
+                        author,
+                        agreeing_sources: sources,
+                    }),
+                };
+            }
+        }
+
         let reason = explain(class, &sources);
         let decision = match self.modes.mode_for(class) {
             SinkMode::Deny => Decision::Deny { reason },
@@ -95,6 +153,7 @@ impl FlowPolicy {
             decision,
             sink_class: Some(class),
             taint_sources: sources,
+            exemption: None,
         }
     }
 }
@@ -128,6 +187,7 @@ mod tests {
             server: server.to_string(),
             tool: tool.to_string(),
             call_id,
+            author: None,
         });
         taint
     }
@@ -139,14 +199,18 @@ mod tests {
     #[test]
     fn non_sink_calls_are_allowed_even_when_tainted() {
         let taint = tainted_by("fs", "fs__read_text_file", 1);
-        let assessment = policy().assess("fs__read_text_file", &taint);
+        let assessment = policy().assess("fs__read_text_file", &taint, &CallRecipients::default());
         assert_eq!(assessment.decision, Decision::Allow);
         assert_eq!(assessment.sink_class, None);
     }
 
     #[test]
     fn sinks_are_allowed_in_a_clean_session() {
-        let assessment = policy().assess("mail__send_email", &SessionTaint::clean());
+        let assessment = policy().assess(
+            "mail__send_email",
+            &SessionTaint::clean(),
+            &CallRecipients::default(),
+        );
         assert_eq!(assessment.decision, Decision::Allow);
         assert_eq!(
             assessment.sink_class,
@@ -158,7 +222,7 @@ mod tests {
     #[test]
     fn a_sink_in_a_tainted_session_is_denied() {
         let taint = tainted_by("fs", "fs__read_text_file", 3);
-        let assessment = policy().assess("mail__send_email", &taint);
+        let assessment = policy().assess("mail__send_email", &taint, &CallRecipients::default());
         assert!(matches!(assessment.decision, Decision::Deny { .. }));
         assert_eq!(assessment.sink_class, Some(SinkClass::ExternalSend));
         assert_eq!(assessment.taint_sources.len(), 1);
@@ -169,7 +233,7 @@ mod tests {
         // The cross-server property: this is the rule a per-server proxy cannot
         // express, because it never observes both halves of the flow.
         let taint = tainted_by("fs", "fs__read_text_file", 1);
-        let assessment = policy().assess("mail__send_email", &taint);
+        let assessment = policy().assess("mail__send_email", &taint, &CallRecipients::default());
 
         assert!(matches!(assessment.decision, Decision::Deny { .. }));
         let Decision::Deny { reason } = &assessment.decision else {
@@ -192,14 +256,14 @@ mod tests {
         let policy = FlowPolicy::new(SinkMap::default(), modes);
         let taint = tainted_by("fs", "fs__read_text_file", 1);
 
-        let assessment = policy.assess("mail__send_email", &taint);
+        let assessment = policy.assess("mail__send_email", &taint, &CallRecipients::default());
         let Decision::Escalate { reason } = &assessment.decision else {
             panic!("expected escalation, got {:?}", assessment.decision)
         };
         assert!(reason.contains("customhouse approve external_send"));
 
         // Other classes keep the hard default.
-        let payment = policy.assess("bank__transfer_funds", &taint);
+        let payment = policy.assess("bank__transfer_funds", &taint, &CallRecipients::default());
         assert!(matches!(payment.decision, Decision::Deny { .. }));
     }
 
@@ -210,13 +274,94 @@ mod tests {
             server: "web".into(),
             tool: "web__fetch".into(),
             call_id: 2,
+            author: None,
         });
-        let assessment = policy().assess("mail__send_email", &taint);
+        let assessment = policy().assess("mail__send_email", &taint, &CallRecipients::default());
         let Decision::Deny { reason } = &assessment.decision else {
             unreachable!()
         };
         assert!(reason.contains("fs") && reason.contains("web"));
         assert_eq!(assessment.taint_sources.len(), 2);
+    }
+
+    fn tainted_by_author(server: &str, call_id: u64, author: &str) -> SessionTaint {
+        let mut taint = SessionTaint::clean();
+        taint.taint(TaintSource {
+            server: server.to_string(),
+            tool: format!("{server}__read"),
+            call_id,
+            author: Some(author.to_string()),
+        });
+        taint
+    }
+
+    fn to(values: &[&str]) -> CallRecipients {
+        CallRecipients {
+            declared: true,
+            values: values.iter().map(|v| v.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_reply_to_the_author_is_allowed_and_carries_evidence() {
+        let taint = tainted_by_author("desk", 4, "customer@example.com");
+        let a = policy().assess("mail__send_email", &taint, &to(&["customer@example.com"]));
+
+        assert_eq!(a.decision, Decision::Allow);
+        let ex = a.exemption.expect("an exemption must record why it fired");
+        assert_eq!(ex.author, "customer@example.com");
+        assert_eq!(
+            ex.agreeing_sources.len(),
+            1,
+            "the whole agreeing set is recorded, not just a count"
+        );
+    }
+
+    #[test]
+    fn a_reply_to_anyone_else_is_still_blocked() {
+        let taint = tainted_by_author("desk", 4, "customer@example.com");
+        let a = policy().assess("mail__send_email", &taint, &to(&["attacker@evil.example"]));
+        assert!(matches!(a.decision, Decision::Deny { .. }));
+        assert!(a.exemption.is_none());
+    }
+
+    #[test]
+    fn the_exemption_never_applies_to_money_or_egress() {
+        // Same author, same recipient — but these classes showed no measured
+        // false positives, so they must not gain an exemption (§17.4).
+        let taint = tainted_by_author("desk", 4, "customer@example.com");
+        for tool in ["bank__transfer_funds", "storage__upload_file"] {
+            let a = policy().assess(tool, &taint, &to(&["customer@example.com"]));
+            assert!(
+                matches!(a.decision, Decision::Deny { .. }),
+                "{tool} must stay blocked"
+            );
+            assert!(a.exemption.is_none());
+        }
+    }
+
+    #[test]
+    fn an_anonymous_source_in_the_session_defeats_the_exemption() {
+        // One authored source, one anonymous. The anonymous content could reach
+        // a recipient who did not write it, so no exemption.
+        let mut taint = tainted_by_author("desk", 4, "customer@example.com");
+        taint.taint(TaintSource {
+            server: "web".into(),
+            tool: "web__fetch".into(),
+            call_id: 5,
+            author: None,
+        });
+        let a = policy().assess("mail__send_email", &taint, &to(&["customer@example.com"]));
+        assert!(matches!(a.decision, Decision::Deny { .. }));
+        assert!(a.exemption.is_none());
+    }
+
+    #[test]
+    fn undeclared_recipients_keep_the_call_blocked() {
+        let taint = tainted_by_author("desk", 4, "customer@example.com");
+        let a = policy().assess("mail__send_email", &taint, &CallRecipients::default());
+        assert!(matches!(a.decision, Decision::Deny { .. }));
+        assert!(a.exemption.is_none());
     }
 
     #[test]
@@ -225,7 +370,7 @@ mod tests {
         // quote the untrusted text — the model reading this error cannot be
         // re-injected by it.
         let taint = tainted_by("fs", "fs__read_text_file", 9);
-        let assessment = policy().assess("mail__send_email", &taint);
+        let assessment = policy().assess("mail__send_email", &taint, &CallRecipients::default());
         let Decision::Deny { reason } = &assessment.decision else {
             unreachable!()
         };

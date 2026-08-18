@@ -30,7 +30,8 @@ use rmcp::{
 use crate::approval::{self, ApprovalOutcome, ApprovalStore};
 use crate::config::Config;
 use crate::decision::{Decision, InvariantOutcome};
-use crate::flow::FlowPolicy;
+use crate::destination;
+use crate::flow::{CallRecipients, FlowPolicy};
 use crate::invariant::Invariants;
 use crate::ledger::Ledger;
 use crate::pin::PinStore;
@@ -221,7 +222,21 @@ impl ServerHandler for CustomhouseProxy {
         // The guard is taken here and held until after any tainting below, so
         // concurrent requests cannot slip a sink past an in-flight untrusted read.
         let mut taint = self.taint.lock().await;
-        let flow = self.flow.assess(&tool, &taint);
+        // Recipients are read only from argument names the sink's upstream
+        // declared. Undeclared stays undeclared rather than defaulting to an
+        // empty list, because "we could not identify recipients" must not be
+        // mistaken for "there were none" (§17.4).
+        let recipients = server
+            .as_deref()
+            .map(|srv| {
+                let fields = self.registry.recipient_fields_of(srv);
+                CallRecipients {
+                    declared: !fields.is_empty(),
+                    values: collect_recipients(request.arguments.as_ref(), fields),
+                }
+            })
+            .unwrap_or_default();
+        let flow = self.flow.assess(&tool, &taint, &recipients);
         self.ledger.record_flow(&tool, &flow);
         match flow.decision {
             Decision::Allow => {}
@@ -263,10 +278,25 @@ impl ServerHandler for CustomhouseProxy {
                 // taint too — their content reaches the model either way.
                 if let Some(server) = server {
                     if self.registry.trust_of(&server).is_untrusted() {
+                        // Read the asserted author from the declared structured
+                        // field. Never from searching the body (§17.2).
+                        let author = self.registry.author_field_of(&server).and_then(|field| {
+                            let text = result
+                                .content
+                                .first()
+                                .and_then(|b| b.as_text())
+                                .map(|t| t.text.as_str());
+                            destination::author_from_result(
+                                field,
+                                result.structured_content.as_ref(),
+                                text,
+                            )
+                        });
                         let source = TaintSource {
                             server,
                             tool: tool.to_string(),
                             call_id,
+                            author,
                         };
                         self.ledger.record_taint(&source);
                         taint.taint(source);
@@ -282,6 +312,31 @@ impl ServerHandler for CustomhouseProxy {
             Err(error) => Err(McpError::internal_error(error.to_string(), None)),
         }
     }
+}
+
+/// Pull recipient values out of the declared argument fields.
+///
+/// Only the named fields are read, and only string or array-of-string values.
+/// Anything else contributes nothing, so a structure we do not understand can
+/// never silently become an empty recipient set that satisfies the rule.
+fn collect_recipients(
+    arguments: Option<&serde_json::Map<String, serde_json::Value>>,
+    fields: &[String],
+) -> Vec<String> {
+    let Some(args) = arguments else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for field in fields {
+        match args.get(field) {
+            Some(serde_json::Value::String(s)) => out.push(s.clone()),
+            Some(serde_json::Value::Array(items)) => {
+                out.extend(items.iter().filter_map(|i| i.as_str().map(str::to_string)));
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 /// The error returned for an MCP surface Customhouse does not yet mediate.

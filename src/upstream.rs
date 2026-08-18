@@ -87,6 +87,11 @@ pub struct Registry {
     /// Trust class per upstream name. Absent means untrusted: a server we do
     /// not know about cannot be assumed clean.
     trust: HashMap<String, TrustClass>,
+    /// Declared author field per upstream. Absent means this server asserts
+    /// nothing about authorship, so it can never authorise a reply.
+    author_fields: HashMap<String, String>,
+    /// Declared recipient argument names per upstream sink.
+    recipient_fields: HashMap<String, Vec<String>>,
 }
 
 impl Registry {
@@ -119,6 +124,16 @@ impl Registry {
                     source,
                 })?;
             registry.trust.insert(config.name.clone(), config.trust);
+            if let Some(field) = &config.author_field {
+                registry
+                    .author_fields
+                    .insert(config.name.clone(), field.clone());
+            }
+            if !config.recipient_fields.is_empty() {
+                registry
+                    .recipient_fields
+                    .insert(config.name.clone(), config.recipient_fields.clone());
+            }
             let version = upstream.declared_version();
             let checked = pins.check_server(&config.name, version.as_deref(), tools);
             events.extend(registry.apply_server_checks(&config.name, index, checked)?);
@@ -204,6 +219,20 @@ impl Registry {
     /// default-deny attribution the taint model rests on (§7.1).
     pub fn trust_of(&self, server: &str) -> TrustClass {
         self.trust.get(server).copied().unwrap_or_default()
+    }
+
+    /// The field this upstream's results use to assert authorship, if declared.
+    pub fn author_field_of(&self, server: &str) -> Option<&str> {
+        self.author_fields.get(server).map(String::as_str)
+    }
+
+    /// The argument names this upstream's sink tools use for recipients.
+    /// An empty slice means undeclared, so the exemption cannot fire (§17.4).
+    pub fn recipient_fields_of(&self, server: &str) -> &[String] {
+        self.recipient_fields
+            .get(server)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     /// Route a client tool call to its owning upstream, rewriting the namespaced
