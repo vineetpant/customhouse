@@ -16,4 +16,4 @@ Source, demos and the measured block/false-positive rates:
 
 ## Writing
 
-- [Blocking prompt injection deterministically costs 40% false positives. Here's what they actually were.](/false-positives/)
+- [Blocking prompt injection deterministically costs 40% false positives. Here's what they actually were.]({{ site.baseurl }}/false-positives/)
