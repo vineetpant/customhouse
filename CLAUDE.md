@@ -91,6 +91,14 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
 - Work in small, individually testable chunks; **commit each working chunk.**
 - **Write tests alongside code and run them yourself before telling me a chunk is done.**
 - **Never claim something works without running it.**
+- **A check that reports success by producing no output can silently mean "did
+  not run".** Never gate on `cmd | grep -c error` returning 0, or on an empty
+  diff, without confirming the command actually executed and produced the output
+  you are filtering. `cargo build` reported a cached "Finished" and a grep
+  returned zero errors on a build that had fifteen. Prefer commands that state
+  what they did (`cargo check --all-targets`, read the tail), and treat a result
+  that contradicts something you know — a 3-argument call compiling with 2 — as
+  a broken check rather than a surprise.
 - **Post-tag, nothing ships without explicit approval.** Once a version is
   tagged and published, the bar changes: propose the change, explain the options
   and trade-offs, and **wait for a decision before writing any code**. Published

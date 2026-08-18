@@ -68,13 +68,19 @@ Regenerate with `./demo/run_metrics.sh`; full tables in [`METRICS.md`](./METRICS
 
 | Metric | Value |
 | --- | --- |
-| Block rate over injection scenarios | **100%** (11/11) |
-| False-positive rate over benign workflows that use sinks | **40%** (4/10) |
+| Block rate over injection scenarios | **100%** (12/12) |
+| False-positive rate over benign workflows that use sinks | **30%** (3/10) |
 
-That 40% is not a bug to be explained away. It is the cost of a rule that
-cannot be evaded. Session-scoped taint blocks legitimate work too: reading a
-support ticket and replying to it looks identical, at the tool boundary, to
-reading a poisoned ticket and exfiltrating through the reply.
+That 30% is not a bug to be explained away. It is the cost of a rule that
+cannot be evaded. Session-scoped taint blocks legitimate work too: fetching a
+web page and posting a summary looks identical, at the tool boundary, to
+fetching a poisoned page and exfiltrating through the post.
+
+It was 40% in v0.2.1. Destination classification recovered the one shape it can
+reach (a reply going back to the author of the ticket that prompted it) while
+the block rate held across a *larger* attack set. The remaining three read from
+sources that assert no authorship, or send deliberately to someone who did not
+write the content. [`METRICS.md`](./METRICS.md) has the per-scenario detail.
 
 The per-class breakdown is what makes it actionable, and it is measured, not
 guessed:
@@ -82,7 +88,7 @@ guessed:
 | Sink class | Benign attempts | Blocked | Recommended mode |
 | --- | --- | --- | --- |
 | `payment_transfer` | 1 | 0 | `deny` |
-| `external_send` | 7 | 3 | `require_approval` |
+| `external_send` | 7 | 2 | `require_approval` |
 | `data_egress` | 2 | 1 | `require_approval` |
 
 Money movement never produced a false positive, so it can bear a hard block.
