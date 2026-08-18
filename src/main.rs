@@ -29,6 +29,7 @@ fn main() -> ExitCode {
         None | Some("serve") => run_serve(args.collect()),
         Some("repin") => run_repin(args.collect()),
         Some("approve") => run_approve(args.collect()),
+        Some("verify-ledger") => run_verify_ledger(args.collect()),
         Some(other) => {
             eprintln!("customhouse: unknown argument `{other}`");
             print_usage();
@@ -171,11 +172,42 @@ fn run_approve(rest: Vec<String>) -> ExitCode {
     }
 }
 
+/// `customhouse verify-ledger [path]` — walk the ledger's hash chain.
+///
+/// Reports tampering in the sense of a point edit; it does not attest who wrote
+/// the entries. See SECURITY.md for what that does and does not buy.
+fn run_verify_ledger(rest: Vec<String>) -> ExitCode {
+    let path = match rest.as_slice() {
+        [] => customhouse::paths::customhouse_home().join("ledger.jsonl"),
+        [p] => PathBuf::from(p),
+        _ => {
+            eprintln!("customhouse: verify-ledger takes at most one path");
+            return ExitCode::FAILURE;
+        }
+    };
+    match customhouse::ledger::verify(&path) {
+        Ok(n) => {
+            eprintln!(
+                "customhouse: {} entries verified; the chain is intact from the genesis entry.",
+                n
+            );
+            eprintln!("customhouse: this detects edited or removed entries. It does not prove who wrote them.");
+            ExitCode::SUCCESS
+        }
+        Err(e) => {
+            eprintln!("customhouse: ledger verification FAILED");
+            eprintln!("  {e}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 fn print_usage() {
     eprintln!("Usage: customhouse <command> [options]");
     eprintln!("  serve [--config <path>]   Run the aggregating MCP proxy over stdio (default;");
     eprintln!("                            config default: customhouse.toml)");
     eprintln!("  repin <server>            Accept an upstream's current tool definitions");
     eprintln!("  approve <sink-class>      Authorise one retry of an escalated sink call");
+    eprintln!("  verify-ledger [path]      Walk the audit ledger's hash chain");
     eprintln!("  --version | --help");
 }

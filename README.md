@@ -109,7 +109,10 @@ data_egress      = "require_approval"
 **Observability.** Customhouse aggregates your MCP servers behind one endpoint and
 writes an append-only JSONL ledger of every mediated call: which tool, which
 upstream, what was decided. Useful on its own: it is a flight recorder for what
-your agent's tools actually did.
+your agent's tools actually did. Each entry carries the hash of the line before
+it, so `customhouse verify-ledger` can show whether any entry was edited or
+removed after the fact — tamper-evident, not tamper-proof; see
+[`SECURITY.md`](./SECURITY.md) for the limit.
 
 **Self-protection.** A set of invariants compiled into the binary, neither
 configurable nor reachable through the proxied surface, denies any call whose

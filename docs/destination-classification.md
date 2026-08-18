@@ -6,7 +6,7 @@ published: false
 
 # A narrow rule fixed the workflows it can reach. Here is why it cannot reach the others.
 
-Last month I published a false-positive rate for a provenance-based MCP proxy: 11 out of 11 injection scenarios blocked, and 4 out of the 10 benign workflows that used a sink blocked along with them. The post-mortem found something more useful than the number. In all four cases the data flow was real. What made the workflows legitimate was the destination, not the data.
+I published a false-positive rate for a provenance-based MCP proxy: 11 out of 11 injection scenarios blocked, and 4 out of the 10 benign workflows that used a sink blocked along with them. The post-mortem found something more useful than the number. In all four cases the data flow was real. What made the workflows legitimate was the destination, not the data.
 
 This is what happened when I built the fix.
 

@@ -26,6 +26,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rmcp::model::CallToolRequestParams;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::decision::{Assessment, Decision, InvariantOutcome};
 use crate::flow::FlowAssessment;
@@ -35,12 +36,34 @@ use crate::session::TaintSource;
 
 const LEDGER_FILE: &str = "ledger.jsonl";
 
+/// The `prev_hash` of the first entry in a chain. A fixed, documented value
+/// rather than an absent field, so "this is the genesis entry" and "this entry
+/// lost its chaining" are distinguishable.
+pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+/// Hex SHA-256 of a written ledger line, excluding its trailing newline.
+fn hash_line(line: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(line.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Open file plus the hash of the last line written.
+///
+/// These live behind one lock because they must move together: writing a line
+/// and advancing the chain head is a single operation, and interleaving them
+/// would produce a chain that does not verify.
+struct LedgerState {
+    file: Option<File>,
+    prev_hash: String,
+}
+
 /// An append-only JSONL sink for mediated-call records.
 pub struct Ledger {
     path: PathBuf,
-    /// `None` means the ledger is disabled (the file could not be opened). In
-    /// Phase 0 that is not fatal — see `record` for the fail-open posture.
-    sink: Mutex<Option<File>>,
+    /// Sink plus chain head. `file: None` means the ledger is disabled (it could
+    /// not be opened), which is not fatal — see `write` for the fail-open posture.
+    state: Mutex<LedgerState>,
     next_id: AtomicU64,
 }
 
@@ -53,11 +76,15 @@ impl Ledger {
     /// Open the ledger under an explicit home directory (tests supply a tempdir).
     pub fn open_in(home: &Path) -> Self {
         let path = home.join(LEDGER_FILE);
-        let sink = match Self::try_open(home, &path) {
+        // Resume the chain before appending. Starting a fresh chain on top of an
+        // existing file would leave a break at the join that verification would
+        // report forever, indistinguishable from tampering.
+        let prev_hash = Self::chain_head(&path);
+        let file = match Self::try_open(home, &path) {
             Ok(file) => Some(file),
             Err(e) => {
                 eprintln!(
-                    "customhouse: ledger disabled — cannot open {}: {e}",
+                    "customhouse: ledger disabled, cannot open {}: {e}",
                     path.display()
                 );
                 None
@@ -65,7 +92,7 @@ impl Ledger {
         };
         Self {
             path,
-            sink: Mutex::new(sink),
+            state: Mutex::new(LedgerState { file, prev_hash }),
             next_id: AtomicU64::new(0),
         }
     }
@@ -74,9 +101,21 @@ impl Ledger {
     pub fn disabled() -> Self {
         Self {
             path: PathBuf::new(),
-            sink: Mutex::new(None),
+            state: Mutex::new(LedgerState {
+                file: None,
+                prev_hash: GENESIS_HASH.to_string(),
+            }),
             next_id: AtomicU64::new(0),
         }
+    }
+
+    /// Hash of the last line already in the file, or the genesis value if the
+    /// ledger is new or unreadable.
+    fn chain_head(path: &Path) -> String {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| text.lines().rfind(|l| !l.trim().is_empty()).map(hash_line))
+            .unwrap_or_else(|| GENESIS_HASH.to_string())
     }
 
     fn try_open(home: &Path, path: &Path) -> std::io::Result<File> {
@@ -234,26 +273,46 @@ impl Ledger {
         self.write(&entry);
     }
 
+    /// Append one entry, chaining it to the previous line.
+    ///
+    /// Chaining happens here rather than in each entry type, so a new kind of
+    /// record cannot be added that forgets to participate in the chain.
     fn write(&self, entry: &impl Serialize) {
         // Phase 0 posture: a logging failure must NOT block the mediated call.
         // Here the ledger is an observability record, not the enforcement record.
-        // This flips to fail-closed in Phase 1, once an approval writes a
-        // declassification record that must be durable to be trusted.
-        let mut guard = self.sink.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(file) = guard.as_mut() else {
-            return;
+        let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+
+        let mut value = match serde_json::to_value(entry) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("customhouse: ledger serialize failed (call still proceeds): {e}");
+                return;
+            }
         };
-        let mut line = match serde_json::to_string(entry) {
+        if let serde_json::Value::Object(map) = &mut value {
+            map.insert(
+                "prev_hash".to_string(),
+                serde_json::Value::String(state.prev_hash.clone()),
+            );
+        }
+        let line = match serde_json::to_string(&value) {
             Ok(line) => line,
             Err(e) => {
                 eprintln!("customhouse: ledger serialize failed (call still proceeds): {e}");
                 return;
             }
         };
-        line.push('\n');
-        if let Err(e) = file.write_all(line.as_bytes()) {
+
+        let Some(file) = state.file.as_mut() else {
+            return;
+        };
+        if let Err(e) = file.write_all(format!("{line}\n").as_bytes()) {
             eprintln!("customhouse: ledger write failed (call still proceeds): {e}");
+            return;
         }
+        // Advance the head only after the line is durably handed to the file, so
+        // a failed write cannot leave the chain pointing at a line nobody has.
+        state.prev_hash = hash_line(&line);
     }
 }
 
@@ -380,6 +439,71 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Why a ledger failed verification.
+#[derive(Debug, thiserror::Error)]
+pub enum VerifyError {
+    #[error("cannot read ledger: {0}")]
+    Read(#[source] std::io::Error),
+    #[error("line {line}: not valid JSON: {source}")]
+    Malformed {
+        line: usize,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("line {line}: no prev_hash field, so the chain cannot be followed")]
+    MissingChain { line: usize },
+    #[error(
+        "line {line}: chain broken. Expected prev_hash {expected}, found {found}. \
+         Everything before this line verifies; this line or the one before it was altered."
+    )]
+    Broken {
+        line: usize,
+        expected: String,
+        found: String,
+    },
+}
+
+/// Walk a ledger's hash chain.
+///
+/// Detects a point edit: altering any line changes its hash, so the following
+/// line's `prev_hash` no longer matches and verification names that line.
+///
+/// This is **tamper-evident, not tamper-proof**. Nothing here is cryptographically
+/// attributable to an author. An attacker who can write the file can recompute
+/// every subsequent hash and produce a chain that verifies; what this closes is
+/// the case of an entry being quietly edited or removed in place.
+pub fn verify(path: &Path) -> Result<usize, VerifyError> {
+    let text = std::fs::read_to_string(path).map_err(VerifyError::Read)?;
+    let mut expected = GENESIS_HASH.to_string();
+    let mut checked = 0usize;
+
+    for (index, line) in text.lines().enumerate() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let number = index + 1;
+        let value: serde_json::Value =
+            serde_json::from_str(line).map_err(|source| VerifyError::Malformed {
+                line: number,
+                source,
+            })?;
+        let found = value
+            .get("prev_hash")
+            .and_then(|v| v.as_str())
+            .ok_or(VerifyError::MissingChain { line: number })?;
+        if found != expected {
+            return Err(VerifyError::Broken {
+                line: number,
+                expected,
+                found: found.to_string(),
+            });
+        }
+        expected = hash_line(line);
+        checked += 1;
+    }
+    Ok(checked)
 }
 
 #[cfg(test)]
@@ -531,6 +655,67 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("pinned=old"));
+    }
+
+    #[test]
+    fn every_entry_chains_to_the_one_before_it() {
+        let home = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open_in(home.path());
+        ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
+        ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
+        ledger.record_metadata("web", "web__fetch", &PinOutcome::FirstSight);
+
+        let entries = read_entries(ledger.path());
+        assert_eq!(
+            entries[0]["prev_hash"], GENESIS_HASH,
+            "first entry anchors to genesis"
+        );
+        assert_eq!(verify(ledger.path()).unwrap(), 3);
+    }
+
+    #[test]
+    fn a_point_edit_to_a_historical_entry_is_detected_and_named() {
+        // The property the feature exists for: an entry quietly altered in place
+        // breaks the chain at the *following* line, and verification says which.
+        let home = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open_in(home.path());
+        for _ in 0..4 {
+            ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
+        }
+        assert!(verify(ledger.path()).is_ok(), "clean ledger verifies");
+
+        // Rewrite line 2's decision from deny-shaped to allow-shaped.
+        let text = fs::read_to_string(ledger.path()).unwrap();
+        let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+        lines[1] = lines[1].replace("\"tool\":\"web__fetch\"", "\"tool\":\"web__tampered\"");
+        fs::write(ledger.path(), lines.join("\n") + "\n").unwrap();
+
+        match verify(ledger.path()) {
+            Err(VerifyError::Broken { line, .. }) => {
+                assert_eq!(line, 3, "the break surfaces at the line after the edit");
+            }
+            other => panic!("expected a broken chain, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn appending_after_a_restart_keeps_the_chain_intact() {
+        // A fresh process must resume the chain rather than restart it, or the
+        // join would look like tampering forever.
+        let home = tempfile::tempdir().unwrap();
+        {
+            let ledger = Ledger::open_in(home.path());
+            ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
+        }
+        {
+            let ledger = Ledger::open_in(home.path());
+            ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
+        }
+        assert_eq!(
+            verify(&home.path().join(LEDGER_FILE)).unwrap(),
+            2,
+            "both entries verify across the restart boundary"
+        );
     }
 
     #[test]
