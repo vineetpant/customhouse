@@ -11,7 +11,8 @@ Customhouse is a deterministic reference monitor for the MCP tool boundary: an a
 - **Status:** Phase 1 (R3 flow enforcement) is **built and measured**. The
   headline claim is now demonstrable: `./demo/run_flow_block.sh` blocks a
   cross-server exfiltration against the real filesystem MCP server. Measured
-  behaviour lives in `METRICS.md` (100% block, 40% false positive).
+  behaviour lives in `METRICS.md` (100% block, 30% false positive) — regenerate
+  it rather than quoting this line, which is a pointer, not the source.
 
 ### Phases (implementation plan)
 

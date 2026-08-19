@@ -129,7 +129,16 @@ impl Discovery {
             // A remote server is identified by what it *has* (a url), not by the
             // absence of a command, so the two cases stay distinguishable in the
             // report the user reads.
-            if entry.get("url").is_some() || entry.get("type").is_some() {
+            //
+            // `type` alone does not make a server remote: Cursor and VS Code
+            // write `"type": "stdio"` for local ones. Treating any declared
+            // transport as remote skips launchable servers — and tells the user
+            // an entry that literally says `stdio` is "not a stdio server".
+            let declared_remote = entry
+                .get("type")
+                .and_then(|v| v.as_str())
+                .is_some_and(|t| !t.eq_ignore_ascii_case("stdio"));
+            if entry.get("url").is_some() || declared_remote {
                 self.skipped.push(skip(SkipReason::NotStdio));
                 continue;
             }
@@ -430,6 +439,29 @@ mod tests {
         assert!(reasons.contains(&("remote", SkipReason::NotStdio)));
         assert!(reasons.contains(&("typed", SkipReason::NotStdio)));
         assert!(reasons.contains(&("broken", SkipReason::NoCommand)));
+    }
+
+    #[test]
+    fn a_locally_declared_stdio_server_is_kept() {
+        // Cursor and VS Code write `"type": "stdio"` for local servers. Treating
+        // any declared transport as remote skipped a launchable server — and
+        // told the user an entry saying `stdio` was "not a stdio server".
+        let mut d = Discovery::default();
+        d.absorb(
+            "cursor/mcp.json",
+            r#"{"mcpServers": {
+                 "local":  {"type": "stdio", "command": "srv", "args": ["--x"]},
+                 "shouty": {"type": "STDIO", "command": "srv2"},
+                 "remote": {"type": "http", "url": "https://example.com"}
+               }}"#,
+        )
+        .unwrap();
+
+        let kept: Vec<&str> = d.servers.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(kept, ["local", "shouty"], "stdio servers must be launched");
+        assert_eq!(d.servers[0].args, ["--x"]);
+        assert_eq!(d.skipped.len(), 1);
+        assert_eq!(d.skipped[0].name, "remote");
     }
 
     #[test]

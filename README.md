@@ -11,7 +11,7 @@ untrusted content. No model sits in the decision path, and no payload is ever
 pattern-matched. The block follows from provenance alone, so it cannot be
 evaded by rewording, summarising or base64-ing the payload.
 
-> **v0.3.0 is a working reference monitor with measured results. Use it
+> **v0.3.1 is a working reference monitor with measured results. Use it
 > locally, read the numbers, break it. It is not yet a production exfiltration
 > guarantee, and [`SECURITY.md`](./SECURITY.md) says exactly where the line is.**
 
@@ -296,7 +296,7 @@ Run `customhouse --help` for the full CLI.
 ## Documentation
 
 - [`DESIGN-v2.md`](./DESIGN-v2.md): full design and threat model
-- [`SECURITY.md`](./SECURITY.md): what v0.3.0 defends against, what it does not,
+- [`SECURITY.md`](./SECURITY.md): what v0.3.1 defends against, what it does not,
   and the limitations that will not be closed (with reasons)
 
 ## Writing

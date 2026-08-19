@@ -47,6 +47,9 @@ pub enum NoExemptionReason {
     NoRecipients,
     /// At least one recipient was not the author.
     ForeignRecipient,
+    /// A recipient value did not identify exactly one party, so it could not be
+    /// compared to the author at all. See `normalize_address`.
+    RecipientUnparseable,
 }
 
 impl DestinationVerdict {
@@ -68,6 +71,7 @@ impl DestinationVerdict {
                 NoExemptionReason::RecipientsUndeclared => "recipients_undeclared",
                 NoExemptionReason::NoRecipients => "no_recipients",
                 NoExemptionReason::ForeignRecipient => "foreign_recipient",
+                NoExemptionReason::RecipientUnparseable => "recipient_unparseable",
             },
         }
     }
@@ -83,11 +87,7 @@ pub fn author_from_result(
     structured: Option<&Value>,
     text: Option<&str>,
 ) -> Option<String> {
-    let from_value = |v: &Value| -> Option<String> {
-        let raw = v.get(field)?.as_str()?;
-        let normalized = normalize_address(raw);
-        (!normalized.is_empty()).then_some(normalized)
-    };
+    let from_value = |v: &Value| -> Option<String> { normalize_address(v.get(field)?.as_str()?) };
 
     if let Some(value) = structured.and_then(from_value) {
         return Some(value);
@@ -115,17 +115,21 @@ pub fn classify(
         return DestinationVerdict::no(NoExemptionReason::AuthorUnknown);
     }
 
+    // Unusable authorship is resolved before disagreement, so the recorded
+    // reason says what actually happened: an empty or unparseable author is not
+    // known, not in conflict.
+    let mut normalized = Vec::with_capacity(authors.len());
+    for raw in authors {
+        match normalize_address(raw) {
+            Some(author) => normalized.push(author),
+            None => return DestinationVerdict::no(NoExemptionReason::AuthorUnknown),
+        }
+    }
     // Every taint source must agree. With two authors in the session, replying
     // to either one could carry the other's content to them (§17.4).
-    let author = normalize_address(&authors[0]);
-    if authors
-        .iter()
-        .any(|a| normalize_address(a) != author || a.trim().is_empty())
-    {
+    let author = normalized[0].clone();
+    if normalized.iter().any(|a| *a != author) {
         return DestinationVerdict::no(NoExemptionReason::AuthorsDisagree);
-    }
-    if author.is_empty() {
-        return DestinationVerdict::no(NoExemptionReason::AuthorUnknown);
     }
 
     if recipients.is_empty() {
@@ -133,25 +137,63 @@ pub fn classify(
     }
     // All, not any: one third party in the set defeats the whole call, or
     // "reply to the author, cc the attacker" walks straight through.
-    if recipients.iter().any(|r| normalize_address(r) != author) {
-        return DestinationVerdict::no(NoExemptionReason::ForeignRecipient);
+    for raw in recipients {
+        match normalize_address(raw) {
+            // A recipient we cannot account for in full may hide a second party
+            // the upstream will still deliver to.
+            None => return DestinationVerdict::no(NoExemptionReason::RecipientUnparseable),
+            Some(recipient) if recipient != author => {
+                return DestinationVerdict::no(NoExemptionReason::ForeignRecipient)
+            }
+            Some(_) => {}
+        }
     }
 
     DestinationVerdict::AuthorOnly { author }
 }
 
-/// Reduce an address-shaped value to what actually identifies the party.
+/// Reduce an address-shaped value to the single party it identifies, or `None`
+/// if it does not identify exactly one.
 ///
 /// `Boss <attacker@evil.example>` becomes `attacker@evil.example`: the display
 /// name is attacker-chosen text and carries no authority, so comparing on it
 /// would let a spoofed name satisfy the rule.
-fn normalize_address(raw: &str) -> String {
+///
+/// ## Why this refuses rather than salvages
+///
+/// The rule's guarantee is *every* recipient is the author. That holds only if
+/// Customhouse compares the same set of parties the upstream will act on. A
+/// value like `Customer <customer@example.com>, attacker@evil.example` is one
+/// string here and an address *list* to any RFC-5322 mail server: keeping only
+/// the bracketed span would compare a strictly smaller set than the one that
+/// receives the message, and the exemption would authorise a send to a party it
+/// never examined.
+///
+/// So anything not accounted for in full — text after the closing `>`, more than
+/// one bracket pair, unbalanced brackets — yields `None`, and `None` never
+/// authorises. Refusing legal-but-unusual forms is a false-positive cost, which
+/// is the safe direction. This is deliberately not an RFC 5322 parser; parsing
+/// more permissively would reopen exactly the gap it closes.
+fn normalize_address(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
-    let addr = match (trimmed.rfind('<'), trimmed.rfind('>')) {
-        (Some(open), Some(close)) if close > open => &trimmed[open + 1..close],
-        _ => trimmed,
-    };
-    addr.trim().to_lowercase()
+    if trimmed.is_empty() {
+        return None;
+    }
+    match (trimmed.matches('<').count(), trimmed.matches('>').count()) {
+        (0, 0) => Some(trimmed.to_lowercase()),
+        (1, 1) => {
+            let open = trimmed.find('<')?;
+            let close = trimmed.find('>')?;
+            // Reversed brackets, or trailing text the upstream would read as a
+            // second recipient.
+            if close < open || !trimmed[close + 1..].trim().is_empty() {
+                return None;
+            }
+            let addr = trimmed[open + 1..close].trim();
+            (!addr.is_empty()).then(|| addr.to_lowercase())
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -300,6 +342,63 @@ mod tests {
             verdict.permits_exemption(),
             "v1 ships this as an allow; see DESIGN-v2.md §17.6 and SECURITY.md"
         );
+    }
+
+    // (vii) A second party smuggled into a single recipient string.
+    //
+    // Customhouse sees one string; an RFC-5322 mail server sees an address list
+    // and delivers to both. Keeping only the bracketed span would compare a
+    // strictly smaller set than the one that receives the message, so the
+    // exemption would authorise a send to a party it never looked at.
+    #[test]
+    fn a_second_address_smuggled_after_the_bracket_defeats_the_exemption() {
+        let a = author("customer@example.com");
+        for payload in [
+            "Customer <customer@example.com>, attacker@evil.example",
+            "Customer <customer@example.com> attacker@evil.example",
+            "Customer <customer@example.com>; attacker@evil.example",
+            "<customer@example.com> <attacker@evil.example>",
+        ] {
+            let verdict = classify(&a, true, &[payload.to_string()]);
+            assert!(
+                !verdict.permits_exemption(),
+                "must not allow a value hiding a second recipient: {payload:?}"
+            );
+            assert_eq!(verdict.reason_str(), "recipient_unparseable");
+        }
+    }
+
+    #[test]
+    fn a_clean_bracketed_address_still_matches() {
+        // The counterweight to the test above: refusing everything would be a
+        // safe but useless rule, so the ordinary form must still work.
+        let a = author("customer@example.com");
+        for ok in [
+            "customer@example.com",
+            "  customer@example.com  ",
+            "Ada Customer <customer@example.com>",
+            "Ada Customer <customer@example.com>   ",
+        ] {
+            assert!(
+                classify(&a, true, &[ok.to_string()]).permits_exemption(),
+                "a single unambiguous address must still authorise: {ok:?}"
+            );
+        }
+    }
+
+    // (viii) An author value that identifies nobody is *unknown*, not *disputed*.
+    // The distinction is what the operator reads in the ledger.
+    #[test]
+    fn an_author_that_names_no_one_is_reported_as_unknown() {
+        for empty in ["<>", " ", "", "  <>  ", "<  >"] {
+            let verdict = classify(&[empty.to_string()], true, &["x@y.example".into()]);
+            assert!(!verdict.permits_exemption());
+            assert_eq!(
+                verdict.reason_str(),
+                "author_unknown",
+                "{empty:?} identifies no author"
+            );
+        }
     }
 
     #[test]

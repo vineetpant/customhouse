@@ -11,6 +11,45 @@ change the experience, but only these change the guarantee.
 
 ## [Unreleased]
 
+## [0.3.1] — 2026-08-20
+
+A review pass over the v0.3.0 additions. Every item below was reproduced with a
+test before being changed.
+
+### Fixed
+
+- **(enforcement) A recipient could hide a second party from the author-equality
+  rule.** `Customer <customer@example.com>, attacker@evil.example` is one string
+  to Customhouse and an address *list* to a mail server: v0.3.0 compared only the
+  bracketed span, so the exemption could authorise a send to a recipient it never
+  examined. A recipient now authorises only if it identifies exactly one party;
+  anything else is refused rather than salvaged, under a new
+  `recipient_unparseable` reason. Requires an upstream configured with
+  `author_field` and `recipient_fields`, so it affects opt-in deployments only.
+  The measured block and false-positive rates are unchanged.
+- **A ledger record truncated by a crash destroyed the next one.** A run that
+  died mid-write left no trailing newline, so the next process appended directly
+  onto the fragment and merged two records into one unreadable line. The
+  fragment is now terminated on open and kept as evidence.
+- **Ledger ids restarted at 0 each run, so one file could repeat them.** Ids are
+  cited as references — `caused_by_call`, `server:call_id`, and the denial text's
+  "call N" — which made all of those ambiguous in any file spanning more than one
+  session. The counter now resumes from the file, as the hash chain already did.
+- `customhouse init` skipped servers declared `"type": "stdio"` — the form Cursor
+  and VS Code write for local servers — and reported them as "not a stdio
+  server". Only a `url`, or a `type` that is not `stdio`, now marks a server
+  unlaunchable.
+- An author value that identifies nobody (`""`, `" "`, `"<>"`) is recorded as
+  `author_unknown` rather than `authors_disagree`.
+- `init`'s closing message no longer prints with ragged indentation.
+
+### Changed
+
+- `SECURITY.md` now discloses two ledger limits that were previously unstated:
+  verification stops at the first unreadable line, so entries past it are
+  unchecked; and the ledger fails open, so a running proxy does not guarantee a
+  written trail.
+
 ## [0.3.0] — 2026-08-20
 
 ### Added
@@ -97,7 +136,8 @@ below first existed.
 - Unmediated surfaces (resources, prompts) are explicitly refused rather than
   silently reported empty.
 
-[Unreleased]: https://github.com/vineetpant/customhouse/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/vineetpant/customhouse/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/vineetpant/customhouse/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/vineetpant/customhouse/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/vineetpant/customhouse/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/vineetpant/customhouse/commits/v0.2.0

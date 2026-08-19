@@ -48,6 +48,17 @@ fn hash_line(line: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// What an existing ledger file tells a fresh process about resuming it.
+struct Resume {
+    /// Hash of the last non-empty line, or genesis for a new or unreadable file.
+    prev_hash: String,
+    /// One past the highest id already recorded, so ids stay unique per file.
+    next_id: u64,
+    /// The file does not end in a newline, so the previous run was cut off
+    /// mid-record and the next append must start a fresh line.
+    needs_newline: bool,
+}
+
 /// Open file plus the hash of the last line written.
 ///
 /// These live behind one lock because they must move together: writing a line
@@ -79,9 +90,21 @@ impl Ledger {
         // Resume the chain before appending. Starting a fresh chain on top of an
         // existing file would leave a break at the join that verification would
         // report forever, indistinguishable from tampering.
-        let prev_hash = Self::chain_head(&path);
+        let resumed = Self::resume_from(&path);
         let file = match Self::try_open(home, &path) {
-            Ok(file) => Some(file),
+            Ok(mut file) => {
+                if resumed.needs_newline {
+                    // The previous run died mid-write, leaving a record with no
+                    // terminating newline. Appending straight onto it would
+                    // concatenate the next record into the fragment and lose
+                    // both. Close the line first; the fragment stays in the file
+                    // as the evidence that something was cut short.
+                    if let Err(e) = file.write_all(b"\n") {
+                        eprintln!("customhouse: could not terminate a truncated ledger line: {e}");
+                    }
+                }
+                Some(file)
+            }
             Err(e) => {
                 eprintln!(
                     "customhouse: ledger disabled, cannot open {}: {e}",
@@ -92,8 +115,11 @@ impl Ledger {
         };
         Self {
             path,
-            state: Mutex::new(LedgerState { file, prev_hash }),
-            next_id: AtomicU64::new(0),
+            state: Mutex::new(LedgerState {
+                file,
+                prev_hash: resumed.prev_hash,
+            }),
+            next_id: AtomicU64::new(resumed.next_id),
         }
     }
 
@@ -109,13 +135,42 @@ impl Ledger {
         }
     }
 
-    /// Hash of the last line already in the file, or the genesis value if the
-    /// ledger is new or unreadable.
-    fn chain_head(path: &Path) -> String {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|text| text.lines().rfind(|l| !l.trim().is_empty()).map(hash_line))
-            .unwrap_or_else(|| GENESIS_HASH.to_string())
+    /// Everything an existing ledger file dictates about how to append to it.
+    ///
+    /// One scan, because all three answers come from the same bytes and letting
+    /// them disagree is how a resumed ledger corrupts itself.
+    fn resume_from(path: &Path) -> Resume {
+        let Ok(text) = std::fs::read_to_string(path) else {
+            return Resume {
+                prev_hash: GENESIS_HASH.to_string(),
+                next_id: 0,
+                needs_newline: false,
+            };
+        };
+        Resume {
+            prev_hash: text
+                .lines()
+                .rfind(|l| !l.trim().is_empty())
+                .map(hash_line)
+                .unwrap_or_else(|| GENESIS_HASH.to_string()),
+            // Ids are references, not merely ordinals: taint entries cite
+            // `caused_by_call`, flow entries cite `server:call_id`, and the
+            // client-facing denial names "call N". Restarting the counter would
+            // make every one of those ambiguous in a file spanning more than one
+            // run — which is every real deployment, since the file is append-only
+            // for the life of the operator. Highest id wins rather than last, so
+            // a file that already contains repeats from earlier versions cannot
+            // produce further collisions.
+            next_id: text
+                .lines()
+                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+                .filter_map(|v| v.get("id").and_then(serde_json::Value::as_u64))
+                .max()
+                .map_or(0, |highest| highest + 1),
+            // A well-terminated file ends in a newline. Anything else means the
+            // last write did not finish.
+            needs_newline: !text.is_empty() && !text.ends_with('\n'),
+        }
     }
 
     fn try_open(home: &Path, path: &Path) -> std::io::Result<File> {
@@ -715,6 +770,76 @@ mod tests {
             verify(&home.path().join(LEDGER_FILE)).unwrap(),
             2,
             "both entries verify across the restart boundary"
+        );
+    }
+
+    /// Cut the file mid-record, exactly as a crash between `write_all` and the
+    /// next flush would leave it: no terminating newline.
+    fn simulate_crash_mid_write(path: &Path, keep_bytes_from_end: usize) {
+        let text = fs::read_to_string(path).unwrap();
+        let cut = text.len() - keep_bytes_from_end;
+        fs::write(path, &text[..cut]).unwrap();
+        assert!(
+            !fs::read_to_string(path).unwrap().ends_with('\n'),
+            "the simulated crash must actually leave an unterminated line"
+        );
+    }
+
+    #[test]
+    fn a_record_truncated_by_a_crash_does_not_swallow_the_next_one() {
+        // Appending onto an unterminated line concatenates two records into one
+        // unparseable line: the crash costs its own partial record *and* the
+        // first record of the next session, silently.
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(LEDGER_FILE);
+        {
+            let ledger = Ledger::open_in(home.path());
+            ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
+            ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
+        }
+        simulate_crash_mid_write(&path, 25);
+        let before = fs::read_to_string(&path).unwrap().lines().count();
+
+        {
+            let ledger = Ledger::open_in(home.path());
+            ledger.record_call(&call("mail__send_email", None), Some("mail"), &allow());
+        }
+
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            text.lines().count(),
+            before + 1,
+            "the new record must land on its own line, not inside the fragment"
+        );
+        let last = text.lines().next_back().unwrap();
+        let parsed: Value =
+            serde_json::from_str(last).expect("the record after a crash must be readable");
+        assert_eq!(parsed["tool"], "mail__send_email");
+    }
+
+    #[test]
+    fn ids_continue_across_a_restart_so_a_file_never_repeats_one() {
+        // Ids are cited as references — `caused_by_call`, `server:call_id`, and
+        // the denial text's "call N". A counter that restarts makes every one of
+        // those ambiguous in a multi-session file.
+        let home = tempfile::tempdir().unwrap();
+        let mut assigned = Vec::new();
+        for _ in 0..3 {
+            let ledger = Ledger::open_in(home.path());
+            assigned.push(ledger.record_call(&call("web__fetch", None), Some("web"), &allow()));
+            assigned.push(ledger.record_call(&call("web__fetch", None), Some("web"), &allow()));
+        }
+        assert_eq!(assigned, vec![0, 1, 2, 3, 4, 5]);
+
+        let ids: Vec<u64> = read_entries(&home.path().join(LEDGER_FILE))
+            .iter()
+            .map(|e| e["id"].as_u64().unwrap())
+            .collect();
+        let unique: std::collections::BTreeSet<u64> = ids.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            ids.len(),
+            "no id may repeat within one file: {ids:?}"
         );
     }
 

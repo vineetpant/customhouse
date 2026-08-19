@@ -4,7 +4,7 @@ Customhouse is a security tool, so it owes you a precise account of what it does
 and does not defend against. This document is that account. `DESIGN-v2.md` holds
 the full threat model; this is the operator-facing summary, kept honest.
 
-**Applies to:** v0.3.0. Pre-1.0 and not yet production-hardened.
+**Applies to:** v0.3.1. Pre-1.0 and not yet production-hardened.
 
 ## What Customhouse enforces today
 
@@ -62,6 +62,25 @@ append-only log service — that holds the chain head. Until one exists, treat t
 ledger as evidence for a cooperating operator, not as proof against an adversary
 who already owns the disk.
 
+Two further gaps in the same area, both narrower than the above but neither
+currently closed:
+
+**Verification stops at the first unreadable line.** `verify-ledger` walks the
+chain in order and returns on the first entry it cannot parse or chain. Entries
+after that point are not checked at all. So a single corrupted line — from a
+crash, or from an attacker who overwrites one entry with garbage rather than
+editing it — ends verification there, and later tampering behind it goes
+unreported. A crash no longer *destroys* the following record (v0.3.1), but it
+still stops the walk. Reporting every break and continuing is the fix, and it is
+not yet implemented.
+
+**The ledger fails open.** If the file cannot be opened, Customhouse prints one
+line to stderr and keeps mediating calls, unrecorded. That is a deliberate
+availability choice — losing the audit file should not take the proxy down — but
+it means the presence of enforcement does not guarantee the presence of a record
+of it. An operator who needs the two coupled should check that the ledger exists
+and is growing, rather than assuming a running proxy implies a written trail.
+
 ### Flow enforcement is session-scoped, and that is a real limit
 
 Customhouse sits at the tool boundary. It can see what entered the model's context
@@ -75,10 +94,10 @@ measured rather than argued:
 
 - **It over-blocks.** A legitimate workflow that reads an untrusted source and
   then uses a sink — reading a support ticket and replying to it, fetching a page
-  and posting a summary — is blocked. The measured false-positive rate is **40%**
-  across benign workflows that use sinks (see [`METRICS.md`](./METRICS.md)). That
-  is why `external_send` and `data_egress` are recommended to run in
-  `require_approval` rather than `deny`.
+  and posting a summary — is blocked. The measured false-positive rate is **30%**
+  across benign workflows that use sinks (see [`METRICS.md`](./METRICS.md), which
+  is regenerated and authoritative). That is why `external_send` and
+  `data_egress` are recommended to run in `require_approval` rather than `deny`.
 - **It cannot be evaded by transformation.** Because no content is ever
   inspected, summarising, translating, re-encoding or paraphrasing the untrusted
   data does not help an attacker. The guarantee is about provenance, not text.
@@ -103,6 +122,18 @@ If the author cannot be determined, the recipient arguments are not declared, or
 the taint sources disagree about who the author is, the rule does not fire and
 the call is refused as before. Every unknown resolves toward the stricter
 outcome.
+
+The same applies to the recipient values themselves. A recipient authorises the
+exemption only if it identifies exactly one party: a bare address, or a display
+name with a single bracketed address and nothing after it. Anything else —
+trailing text after the closing `>`, more than one bracket pair, unbalanced
+brackets — is refused rather than salvaged. The reason is that Customhouse must
+compare the same set of parties the upstream will act on: `Customer
+<customer@example.com>, attacker@evil.example` is one string here and an address
+*list* to a mail server, so reading only the bracketed part would authorise a
+send to a recipient never examined. This costs false positives on legal but
+unusual address forms, which is the safe direction. **Fixed in v0.3.1**; v0.3.0
+allowed that value.
 
 ### An author-directed reply can still carry secrets out
 

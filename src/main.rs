@@ -108,10 +108,9 @@ fn run_init(rest: Vec<String>) -> ExitCode {
     }
 
     eprintln!("customhouse: wrote {}", out_path.display());
-    eprintln!(
-        "customhouse: every upstream is UNTRUSTED. Until you edit that, any session
-            that reads from one is tainted and sink calls are refused or escalated."
-    );
+    eprintln!("customhouse: every upstream is UNTRUSTED. Until you edit that, any");
+    eprintln!("customhouse: session that reads from one is tainted, and sink calls in it");
+    eprintln!("customhouse: are refused or escalated.");
     eprintln!("customhouse: review the file, then run `customhouse serve`.");
     ExitCode::SUCCESS
 }
