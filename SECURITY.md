@@ -127,7 +127,11 @@ The same applies to the recipient values themselves. A recipient authorises the
 exemption only if it identifies exactly one party: a bare address, or a display
 name with a single bracketed address and nothing after it. Anything else —
 trailing text after the closing `>`, more than one bracket pair, unbalanced
-brackets — is refused rather than salvaged. The reason is that Customhouse must
+brackets, or a bare value containing a comma, semicolon or internal space — is
+refused rather than salvaged. The same applies structurally: if a declared
+recipient field holds anything but a string or an array of strings, the whole
+recipient set is treated as unknown, because a value Customhouse cannot read may
+still be a recipient the upstream delivers to. The reason is that Customhouse must
 compare the same set of parties the upstream will act on: `Customer
 <customer@example.com>, attacker@evil.example` is one string here and an address
 *list* to a mail server, so reading only the bracketed part would authorise a

@@ -229,11 +229,10 @@ impl ServerHandler for CustomhouseProxy {
         let recipients = server
             .as_deref()
             .map(|srv| {
-                let fields = self.registry.recipient_fields_of(srv);
-                CallRecipients {
-                    declared: !fields.is_empty(),
-                    values: collect_recipients(request.arguments.as_ref(), fields),
-                }
+                collect_recipients(
+                    request.arguments.as_ref(),
+                    self.registry.recipient_fields_of(srv),
+                )
             })
             .unwrap_or_default();
         let flow = self.flow.assess(&tool, &taint, &recipients);
@@ -317,26 +316,39 @@ impl ServerHandler for CustomhouseProxy {
 /// Pull recipient values out of the declared argument fields.
 ///
 /// Only the named fields are read, and only string or array-of-string values.
-/// Anything else contributes nothing, so a structure we do not understand can
-/// never silently become an empty recipient set that satisfies the rule.
+/// Anything else yields [`CallRecipients::Opaque`] rather than a shorter list:
+/// a value we cannot read may still be a recipient the upstream delivers to, so
+/// dropping it would compare a smaller set than the one that receives the
+/// message. A shorter list must never be the result of not understanding the
+/// input.
 fn collect_recipients(
     arguments: Option<&serde_json::Map<String, serde_json::Value>>,
     fields: &[String],
-) -> Vec<String> {
+) -> CallRecipients {
+    if fields.is_empty() {
+        return CallRecipients::Undeclared;
+    }
     let Some(args) = arguments else {
-        return Vec::new();
+        return CallRecipients::Declared(Vec::new());
     };
     let mut out = Vec::new();
     for field in fields {
         match args.get(field) {
+            // A declared field the call simply did not use is not a mystery.
+            None => {}
             Some(serde_json::Value::String(s)) => out.push(s.clone()),
             Some(serde_json::Value::Array(items)) => {
-                out.extend(items.iter().filter_map(|i| i.as_str().map(str::to_string)));
+                for item in items {
+                    match item.as_str() {
+                        Some(s) => out.push(s.to_string()),
+                        None => return CallRecipients::Opaque,
+                    }
+                }
             }
-            _ => {}
+            Some(_) => return CallRecipients::Opaque,
         }
     }
-    out
+    CallRecipients::Declared(out)
 }
 
 /// The error returned for an MCP surface Customhouse does not yet mediate.
@@ -431,6 +443,57 @@ mod tests {
                 error.message
             );
         }
+    }
+
+    fn args(json: serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        json.as_object().unwrap().clone()
+    }
+
+    #[test]
+    fn a_recipient_we_cannot_read_poisons_the_whole_set() {
+        // The structural twin of the address-smuggling gap: an element we skip
+        // is still a recipient to an upstream that accepts object recipients, so
+        // dropping it would compare a smaller set than the one that receives the
+        // message. Partially understood must not read as fully understood.
+        let fields = vec!["to".to_string(), "cc".to_string()];
+
+        let hidden_in_an_object = args(serde_json::json!({
+            "to": ["customer@example.com", {"email": "attacker@evil.example"}]
+        }));
+        assert!(
+            matches!(
+                collect_recipients(Some(&hidden_in_an_object), &fields),
+                CallRecipients::Opaque
+            ),
+            "a non-string array element must poison the set, not shorten it"
+        );
+
+        let whole_field_unreadable =
+            args(serde_json::json!({ "to": {"email": "attacker@evil.example"} }));
+        assert!(matches!(
+            collect_recipients(Some(&whole_field_unreadable), &fields),
+            CallRecipients::Opaque
+        ));
+
+        // The counterweight: readable shapes still resolve, and a declared field
+        // the call did not use is absence, not mystery.
+        let readable = args(serde_json::json!({
+            "to": ["customer@example.com"],
+            "cc": "boss@example.com"
+        }));
+        let CallRecipients::Declared(values) = collect_recipients(Some(&readable), &fields) else {
+            panic!("readable recipients must be declared");
+        };
+        assert_eq!(values, ["customer@example.com", "boss@example.com"]);
+    }
+
+    #[test]
+    fn an_upstream_declaring_no_recipient_fields_stays_undeclared() {
+        let some_args = args(serde_json::json!({ "to": "customer@example.com" }));
+        assert!(matches!(
+            collect_recipients(Some(&some_args), &[]),
+            CallRecipients::Undeclared
+        ));
     }
 
     #[test]

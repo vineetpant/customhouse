@@ -41,6 +41,34 @@ const LEDGER_FILE: &str = "ledger.jsonl";
 /// lost its chaining" are distinguishable.
 pub const GENESIS_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
+/// The highest id already present in a ledger file, including one left in a
+/// line a crash cut short.
+///
+/// Complete lines are read as JSON. A fragment cannot be, so its id is recovered
+/// by scanning — and it must be, or the next record reuses it and the file ends
+/// up with two lines claiming the same id. Over-estimating here only leaves a
+/// gap in the sequence; under-estimating repeats one, so leniency is the safe
+/// direction.
+fn highest_id(text: &str) -> Option<u64> {
+    text.lines()
+        .filter_map(|line| {
+            serde_json::from_str::<serde_json::Value>(line)
+                .ok()
+                .and_then(|v| v.get("id").and_then(serde_json::Value::as_u64))
+                .or_else(|| id_from_fragment(line))
+        })
+        .max()
+}
+
+/// Pull `"id":<digits>` out of a line that does not parse. The fragment is by
+/// construction a prefix of a record this same writer produced, so the field is
+/// written compactly and unquoted.
+fn id_from_fragment(line: &str) -> Option<u64> {
+    let after = line.split("\"id\":").nth(1)?;
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
 /// Hex SHA-256 of a written ledger line, excluding its trailing newline.
 fn hash_line(line: &str) -> String {
     let mut hasher = Sha256::new();
@@ -161,12 +189,7 @@ impl Ledger {
             // for the life of the operator. Highest id wins rather than last, so
             // a file that already contains repeats from earlier versions cannot
             // produce further collisions.
-            next_id: text
-                .lines()
-                .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
-                .filter_map(|v| v.get("id").and_then(serde_json::Value::as_u64))
-                .max()
-                .map_or(0, |highest| highest + 1),
+            next_id: highest_id(&text).map_or(0, |highest| highest + 1),
             // A well-terminated file ends in a newline. Anything else means the
             // last write did not finish.
             needs_newline: !text.is_empty() && !text.ends_with('\n'),
@@ -840,6 +863,40 @@ mod tests {
             unique.len(),
             ids.len(),
             "no id may repeat within one file: {ids:?}"
+        );
+    }
+
+    #[test]
+    fn an_id_stranded_in_a_crash_fragment_is_never_reissued() {
+        // The two fixes above interact: the fragment does not parse, so a scan
+        // that only reads valid JSON cannot see the id it carries, and the next
+        // record claims it again. Neither of the tests above covers the
+        // combination — they are adjacent enough that the gap is easy to miss.
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join(LEDGER_FILE);
+        {
+            let ledger = Ledger::open_in(home.path());
+            for _ in 0..3 {
+                ledger.record_call(&call("web__fetch", None), Some("web"), &allow());
+            }
+        }
+        simulate_crash_mid_write(&path, 30);
+        let stranded = id_from_fragment(
+            fs::read_to_string(&path)
+                .unwrap()
+                .lines()
+                .next_back()
+                .unwrap(),
+        )
+        .expect("the fragment must still carry a readable id");
+
+        let reissued = {
+            let ledger = Ledger::open_in(home.path());
+            ledger.record_call(&call("mail__send_email", None), Some("mail"), &allow())
+        };
+        assert!(
+            reissued > stranded,
+            "id {reissued} was already claimed by the crash fragment ({stranded})"
         );
     }
 

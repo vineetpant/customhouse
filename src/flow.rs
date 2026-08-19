@@ -36,14 +36,23 @@ use crate::sink::{SinkClass, SinkMap};
 
 /// What the proxy could determine about who this call sends to.
 ///
-/// `declared` records whether the sink upstream configured `recipient_fields`
-/// at all. Undeclared is not the same as empty: undeclared means we cannot
-/// identify recipients and must not relax, which is why it is tracked
-/// separately rather than inferred from an empty list.
+/// Three states, not a list plus a flag, because two of them are ways of *not
+/// knowing* and both must be impossible to mistake for "there were none". An
+/// empty recipient list is a fact about the call; the other two are facts about
+/// the limits of what Customhouse could read.
 #[derive(Debug, Clone, Default)]
-pub struct CallRecipients {
-    pub declared: bool,
-    pub values: Vec<String>,
+pub enum CallRecipients {
+    /// The sink's upstream configured no `recipient_fields`, so recipients
+    /// cannot be identified at all (§17.4).
+    #[default]
+    Undeclared,
+    /// Every declared field was read in full. The exemption may be considered.
+    Declared(Vec<String>),
+    /// A declared field held something that is not a string or an array of
+    /// strings. The recipient set is therefore *partially* known, which is worse
+    /// than unknown: comparing the part we understood would authorise a call on
+    /// the strength of a subset the upstream will exceed.
+    Opaque,
 }
 
 /// The operator-side result of the flow rule: the client-facing decision plus
@@ -121,9 +130,13 @@ impl FlowPolicy {
         // Destination classification (§17), external_send only. Money movement
         // and egress showed no measured false positives, so widening the
         // exemption to them would add attack surface to buy nothing.
-        if class == SinkClass::ExternalSend && taint.all_sources_have_authors() {
-            let verdict =
-                destination::classify(&taint.authors(), recipients.declared, &recipients.values);
+        //
+        // Only `Declared` reaches the rule: `Undeclared` and `Opaque` are both
+        // "we do not know who this reaches", and neither may relax a block.
+        if let (SinkClass::ExternalSend, true, CallRecipients::Declared(values)) =
+            (class, taint.all_sources_have_authors(), recipients)
+        {
+            let verdict = destination::classify(&taint.authors(), true, values);
             if let DestinationVerdict::AuthorOnly { author } = verdict {
                 return FlowAssessment {
                     decision: Decision::Allow,
@@ -296,10 +309,7 @@ mod tests {
     }
 
     fn to(values: &[&str]) -> CallRecipients {
-        CallRecipients {
-            declared: true,
-            values: values.iter().map(|v| v.to_string()).collect(),
-        }
+        CallRecipients::Declared(values.iter().map(|v| v.to_string()).collect())
     }
 
     #[test]

@@ -19,12 +19,20 @@ test before being changed.
 ### Fixed
 
 - **(enforcement) A recipient could hide a second party from the author-equality
-  rule.** `Customer <customer@example.com>, attacker@evil.example` is one string
-  to Customhouse and an address *list* to a mail server: v0.3.0 compared only the
-  bracketed span, so the exemption could authorise a send to a recipient it never
-  examined. A recipient now authorises only if it identifies exactly one party;
-  anything else is refused rather than salvaged, under a new
-  `recipient_unparseable` reason. Requires an upstream configured with
+  rule**, by two routes. Textually: `Customer <customer@example.com>,
+  attacker@evil.example` is one string to Customhouse and an address *list* to a
+  mail server, and v0.3.0 compared only the bracketed span. Structurally: a
+  declared recipient array kept its string elements and silently dropped the
+  rest, so `["customer@example.com", {"email": "attacker@evil.example"}]`
+  contributed one recipient to the comparison and two to an upstream that
+  accepts object recipients. Either way the exemption could authorise a send to
+  a recipient it never examined.
+
+  Both are closed the same way — a value that is not fully understood no longer
+  produces a shorter list, it stops the exemption. Recipients now authorise only
+  if every value identifies exactly one party (new `recipient_unparseable`
+  reason), and a declared field holding anything but a string or an array of
+  strings marks the whole set opaque. Requires an upstream configured with
   `author_field` and `recipient_fields`, so it affects opt-in deployments only.
   The measured block and false-positive rates are unchanged.
 - **A ledger record truncated by a crash destroyed the next one.** A run that

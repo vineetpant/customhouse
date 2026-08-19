@@ -368,9 +368,10 @@ fn run(scenario: &Scenario, policy: &FlowPolicy, ledger: &Ledger) -> Outcome {
     let mut detail = String::new();
 
     for (index, step) in scenario.steps.iter().enumerate() {
-        let recipients = CallRecipients {
-            declared: !step.recipients.is_empty(),
-            values: step.recipients.iter().map(|r| r.to_string()).collect(),
+        let recipients = if step.recipients.is_empty() {
+            CallRecipients::Undeclared
+        } else {
+            CallRecipients::Declared(step.recipients.iter().map(|r| r.to_string()).collect())
         };
         let assessment = policy.assess(step.tool, &taint, &recipients);
         ledger.record_flow(step.tool, &assessment);

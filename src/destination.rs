@@ -180,7 +180,16 @@ fn normalize_address(raw: &str) -> Option<String> {
         return None;
     }
     match (trimmed.matches('<').count(), trimmed.matches('>').count()) {
-        (0, 0) => Some(trimmed.to_lowercase()),
+        (0, 0) => {
+            // A bare value must name one party. A comma, a semicolon or an
+            // internal space is how address syntaxes spell "and also", and
+            // SECURITY.md promises a recipient authorises only if it identifies
+            // exactly one party.
+            if trimmed.contains([',', ';']) || trimmed.split_whitespace().count() > 1 {
+                return None;
+            }
+            Some(trimmed.to_lowercase())
+        }
         (1, 1) => {
             let open = trimmed.find('<')?;
             let close = trimmed.find('>')?;
@@ -365,6 +374,27 @@ mod tests {
                 "must not allow a value hiding a second recipient: {payload:?}"
             );
             assert_eq!(verdict.reason_str(), "recipient_unparseable");
+        }
+    }
+
+    // (ix) A bare, bracket-free value that is really a list. Reachable only when
+    // the upstream asserts a list-shaped author, but SECURITY.md states that a
+    // recipient authorises only if it identifies exactly one party, and a comma
+    // list is not that.
+    #[test]
+    fn a_bracket_free_list_never_identifies_one_party() {
+        for list in [
+            "customer@example.com, attacker@evil.example",
+            "customer@example.com; attacker@evil.example",
+            "customer@example.com attacker@evil.example",
+        ] {
+            // Even with the author asserted as the identical string, which is
+            // the most permissive case available to a caller.
+            let verdict = classify(&[list.to_string()], true, &[list.to_string()]);
+            assert!(
+                !verdict.permits_exemption(),
+                "a list must not authorise, even against itself: {list:?}"
+            );
         }
     }
 
