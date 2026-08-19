@@ -9,6 +9,23 @@ Entries that change what Customhouse **allows or refuses** are marked
 **(enforcement)**. Those are the ones to read on an upgrade: everything else can
 change the experience, but only these change the guarantee.
 
+## Release map
+
+Every release, the tag, and the commit the tag points at. A published version is
+permanent, so this table is what makes one reproducible: check out the commit to
+test exactly what shipped, or to roll back to it.
+
+| Version | Tag | Tagged commit | Published |
+| --- | --- | --- | --- |
+| 0.3.1 | `v0.3.1` | _added on tagging; see `git rev-list -n1 v0.3.1`_ | crates.io |
+| 0.3.0 | `v0.3.0` | `cbc0e29bab78254dc331680d591c2298c248a9a8` | crates.io |
+| 0.2.1 | `v0.2.1` | `5a61f9ecb44f406e21d91aa0826b454f23b3e391` | crates.io |
+| 0.2.0 | `v0.2.0` | `28f4f3da4ba77de5bfe0c831407d978d16b6efae` | crates.io |
+| 0.1.0 | — | — | never tagged or published |
+
+Verify any row with `git rev-list -n1 <tag>`; if it disagrees with this table,
+trust git and fix the table.
+
 ## [Unreleased]
 
 ## [0.3.1] — 2026-08-20
