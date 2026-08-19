@@ -4,7 +4,7 @@ Customhouse is a security tool, so it owes you a precise account of what it does
 and does not defend against. This document is that account. `DESIGN-v2.md` holds
 the full threat model; this is the operator-facing summary, kept honest.
 
-**Applies to:** v0.2.1. Pre-1.0 and not yet production-hardened.
+**Applies to:** v0.3.0. Pre-1.0 and not yet production-hardened.
 
 ## What Customhouse enforces today
 

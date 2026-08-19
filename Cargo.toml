@@ -1,6 +1,6 @@
 [package]
 name = "customhouse"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.92"
 license = "Apache-2.0"
@@ -12,10 +12,12 @@ repository = "https://github.com/vineetpant/customhouse"
 readme = "README.md"
 keywords = ["mcp", "security", "ai-agents", "prompt-injection", "proxy"]
 categories = ["command-line-utilities", "network-programming", "development-tools"]
-# Only CI config is excluded. The design doc, examples and demos ship with the
-# crate: for a security tool, being able to read the reasoning and re-run the
-# demos from the published package is worth more than a smaller tarball.
-exclude = ["/.github"]
+# CI config and the Pages site are excluded; the latter is a rendered copy of
+# material already in the repo and is served from the website, not read from the
+# crate. The design doc, examples and demos DO ship: for a security tool, being
+# able to read the reasoning and re-run the demos from the published package is
+# worth more than a smaller tarball.
+exclude = ["/.github", "/docs"]
 
 [[bin]]
 name = "customhouse"
