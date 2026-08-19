@@ -9,7 +9,7 @@ use std::process::ExitCode;
 
 use customhouse::approval::{self, ApprovalStore};
 use customhouse::sink::SinkClass;
-use customhouse::{Config, PinStore};
+use customhouse::{init, Config, PinStore};
 
 /// Config file consulted when `--config` is not given, if it exists.
 const DEFAULT_CONFIG_PATH: &str = "customhouse.toml";
@@ -27,6 +27,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         None | Some("serve") => run_serve(args.collect()),
+        Some("init") => run_init(args.collect()),
         Some("repin") => run_repin(args.collect()),
         Some("approve") => run_approve(args.collect()),
         Some("verify-ledger") => run_verify_ledger(args.collect()),
@@ -36,6 +37,83 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// `customhouse init [--config <path>] [--force]` — write a starting config from
+/// the MCP servers an agent client already launches.
+///
+/// Reports what it found, what it skipped and why, and what the user still has
+/// to decide. It never asserts trust; see `init`'s module docs for why a
+/// generated file that guessed would be worse than no file.
+fn run_init(rest: Vec<String>) -> ExitCode {
+    let mut out_path = PathBuf::from(DEFAULT_CONFIG_PATH);
+    let mut force = false;
+    let mut args = rest.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--force" | "-f" => force = true,
+            "--config" | "-c" => match args.next() {
+                Some(path) => out_path = PathBuf::from(path),
+                None => {
+                    eprintln!("customhouse: --config requires a path");
+                    return ExitCode::FAILURE;
+                }
+            },
+            other => {
+                eprintln!("customhouse: unknown argument `{other}`");
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+
+    // Checked before any reading, so a run that cannot write says so straight
+    // away rather than after printing a discovery report the user cannot use.
+    if out_path.exists() && !force {
+        eprintln!(
+            "customhouse: {} already exists. Move it aside, or pass --force to overwrite it.",
+            out_path.display()
+        );
+        return ExitCode::FAILURE;
+    }
+
+    let mut discovery = init::Discovery::default();
+    let mut read_any = false;
+    for candidate in init::candidate_paths() {
+        let Ok(text) = std::fs::read_to_string(&candidate) else {
+            continue; // A client that is not installed is not a problem.
+        };
+        read_any = true;
+        let label = candidate.display().to_string();
+        eprintln!("customhouse: reading {label}");
+        if let Err(e) = discovery.absorb(&label, &text) {
+            eprintln!("customhouse: skipping {label}: {e}");
+        }
+    }
+    if !read_any {
+        eprintln!("customhouse: found no agent client configs in the usual locations.");
+        eprintln!("customhouse: writing a template you can fill in.");
+    }
+
+    let rendered = init::render_toml(&discovery);
+    if let Err(e) = std::fs::write(&out_path, &rendered) {
+        eprintln!("customhouse: cannot write {}: {e}", out_path.display());
+        return ExitCode::FAILURE;
+    }
+
+    for server in &discovery.servers {
+        eprintln!("  + {} ({})", server.name, server.command);
+    }
+    for skipped in &discovery.skipped {
+        eprintln!("  - {}: {}", skipped.name, skipped.reason.explain());
+    }
+
+    eprintln!("customhouse: wrote {}", out_path.display());
+    eprintln!(
+        "customhouse: every upstream is UNTRUSTED. Until you edit that, any session
+            that reads from one is tainted and sink calls are refused or escalated."
+    );
+    eprintln!("customhouse: review the file, then run `customhouse serve`.");
+    ExitCode::SUCCESS
 }
 
 /// `customhouse repin <server>` — forget a server's pins so its current tool
@@ -206,6 +284,8 @@ fn print_usage() {
     eprintln!("Usage: customhouse <command> [options]");
     eprintln!("  serve [--config <path>]   Run the aggregating MCP proxy over stdio (default;");
     eprintln!("                            config default: customhouse.toml)");
+    eprintln!("  init [--config <path>]    Write a starting config from your agent client's");
+    eprintln!("                            MCP servers (--force to overwrite)");
     eprintln!("  repin <server>            Accept an upstream's current tool definitions");
     eprintln!("  approve <sink-class>      Authorise one retry of an escalated sink call");
     eprintln!("  verify-ledger [path]      Walk the audit ledger's hash chain");

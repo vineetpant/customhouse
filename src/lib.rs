@@ -9,6 +9,7 @@ pub mod config;
 pub mod decision;
 pub mod destination;
 pub mod flow;
+pub mod init;
 pub mod invariant;
 pub mod ledger;
 pub mod paths;

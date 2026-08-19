@@ -217,7 +217,27 @@ cargo build --release      # binary at target/release/customhouse
 cargo test
 ```
 
-Point Customhouse at your MCP servers with a `customhouse.toml`:
+Then generate a starting config from the MCP servers your agent client already
+launches:
+
+```sh
+customhouse init
+```
+
+It reads Claude Desktop's and Cursor's config, writes a `customhouse.toml`, and
+tells you what it skipped and why — a server it cannot launch (a remote `url`
+endpoint) is named rather than quietly omitted, so the file never implies
+mediation it is not providing. It refuses to overwrite an existing config
+without `--force`.
+
+**Every upstream it writes is untrusted, and it will never write otherwise.**
+Trust is the one assertion that decides whether content taints a session, so
+guessing it would hand you a policy you never agreed to. Expect the first run to
+be strict: until you mark a server trusted, any session that reads from one is
+tainted and sink calls are refused or escalated. That is the tool working, not
+misconfigured.
+
+The generated file is the shape below, which you can also write by hand:
 
 ```toml
 # Every upstream declares whether its results may be treated as trusted input.

@@ -99,6 +99,16 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
   what they did (`cargo check --all-targets`, read the tail), and treat a result
   that contradicts something you know — a 3-argument call compiling with 2 — as
   a broken check rather than a surprise.
+- **A negative test must be shown to fail before it is trusted.** A test that
+  asserts something is *rejected* proves nothing until you have seen it reject.
+  Confirm the mutation actually landed — diff the tampered file, check the
+  substitution matched, break the code the test guards and watch it go red —
+  *then* trust the verdict. This has bitten twice in one week, both times the
+  same shape: the check ran, on an input that could not fail. A ledger tamper
+  test passed because the string it rewrote was not present, so the file was
+  byte-identical. For a security tool the tests *are* the evidence, so a test
+  that cannot fail is worse than a missing one — it reports safety it never
+  measured.
 - **Post-tag, nothing ships without explicit approval.** Once a version is
   tagged and published, the bar changes: propose the change, explain the options
   and trade-offs, and **wait for a decision before writing any code**. Published
