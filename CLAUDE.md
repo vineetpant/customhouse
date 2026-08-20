@@ -110,6 +110,21 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
   byte-identical. For a security tool the tests *are* the evidence, so a test
   that cannot fail is worse than a missing one — it reports safety it never
   measured.
+- **Every change goes on a branch and through a PR. Never commit to `main`.**
+  Branch names: `fix/<issue>-<slug>`, `feat/<issue>-<slug>`, `docs/<slug>`,
+  `chore/<slug>`. Open the PR with `gh pr create`, link the issue it closes
+  (`Closes #N`), and let CI run before merge. `main` is what gets tagged and
+  published, so it stays releasable at every commit — a red `main` means the
+  release path is blocked for everyone, not just the author.
+- **Work is tracked as GitHub issues, not in review files.** A review produces
+  issues; the review file is deleted once its findings are filed. An issue
+  records the reproduction, the measurement and the proposed fix, so the next
+  person does not re-derive them.
+- **Every release maps to a commit.** `CHANGELOG.md` carries a release map of
+  version → tag → tagged commit. It is what makes a published version
+  reproducible: check out the commit to test exactly what shipped, or to roll
+  back. Update it as part of the release, and verify with
+  `git rev-list -n1 <tag>` — if git and the table disagree, git wins.
 - **Post-tag, nothing ships without explicit approval.** Once a version is
   tagged and published, the bar changes: propose the change, explain the options
   and trade-offs, and **wait for a decision before writing any code**. Published
