@@ -28,6 +28,25 @@ trust git and fix the table.
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-08-24
+
+### Fixed
+
+- **(enforcement) An address list inside a single bracket pair was read as one
+  party.** `normalize_address` applied its single-party checks — no comma,
+  semicolon or internal space — only to bare values, so `<a@x, b@y>` was
+  extracted whole and compared as one recipient while a mail server would parse
+  it as a list and deliver to both. Both arms now funnel through one shared
+  check, so they cannot drift apart again.
+
+  **Narrow reach, stated plainly.** The exemption only fired when the author and
+  the recipient were the identical list, which requires the attacker to control
+  the asserted author field — and an attacker who can do that already has a reply
+  channel under the residual documented in DESIGN-v2.md §17.6. An honest single
+  author could not have data smuggled to a third party; that comparison held. So
+  this closed a violated invariant rather than a live exfiltration route, and it
+  was handled publicly rather than as a security advisory for that reason.
+
 ## [0.3.1] — 2026-08-20
 
 A review pass over the v0.3.0 additions. Every item below was reproduced with a

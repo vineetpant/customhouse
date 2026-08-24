@@ -180,16 +180,7 @@ fn normalize_address(raw: &str) -> Option<String> {
         return None;
     }
     match (trimmed.matches('<').count(), trimmed.matches('>').count()) {
-        (0, 0) => {
-            // A bare value must name one party. A comma, a semicolon or an
-            // internal space is how address syntaxes spell "and also", and
-            // SECURITY.md promises a recipient authorises only if it identifies
-            // exactly one party.
-            if trimmed.contains([',', ';']) || trimmed.split_whitespace().count() > 1 {
-                return None;
-            }
-            Some(trimmed.to_lowercase())
-        }
+        (0, 0) => single_party(trimmed),
         (1, 1) => {
             let open = trimmed.find('<')?;
             let close = trimmed.find('>')?;
@@ -198,11 +189,29 @@ fn normalize_address(raw: &str) -> Option<String> {
             if close < open || !trimmed[close + 1..].trim().is_empty() {
                 return None;
             }
-            let addr = trimmed[open + 1..close].trim();
-            (!addr.is_empty()).then(|| addr.to_lowercase())
+            single_party(&trimmed[open + 1..close])
         }
         _ => None,
     }
+}
+
+/// The one place that decides whether a value names a single party.
+///
+/// Both arms of `normalize_address` funnel through here so they cannot drift
+/// apart — which is exactly what happened before: the bare arm refused
+/// `a@x, b@y` while the bracketed arm accepted the identical list wrapped in
+/// `<…>`, because the check existed in only one of them.
+///
+/// A comma, a semicolon or an internal space is how every address syntax spells
+/// "and also". Refusing them costs false positives on legal-but-unusual forms,
+/// which is the safe direction: a value we cannot account for in full must not
+/// authorise a send.
+fn single_party(raw: &str) -> Option<String> {
+    let addr = raw.trim();
+    if addr.is_empty() || addr.contains([',', ';']) || addr.split_whitespace().count() > 1 {
+        return None;
+    }
+    Some(addr.to_lowercase())
 }
 
 #[cfg(test)]
@@ -394,6 +403,37 @@ mod tests {
             assert!(
                 !verdict.permits_exemption(),
                 "a list must not authorise, even against itself: {list:?}"
+            );
+        }
+    }
+
+    // (x) A list hidden *inside* the bracket pair. The bare arm refused these
+    // from the start; the bracketed arm did not, because the check lived in only
+    // one of the two. Both now funnel through `single_party`.
+    //
+    // Reached only when the attacker controls the asserted author field — at
+    // which point §17.6 already grants them a reply channel — so this is an
+    // invariant violation rather than a new exfiltration route. It is pinned
+    // because SECURITY.md promises a recipient "identifies exactly one party".
+    #[test]
+    fn a_list_inside_the_brackets_never_identifies_one_party() {
+        for payload in [
+            "<a@evil.example, b@evil.example>",
+            "<a@evil.example; b@evil.example>",
+            "<a@evil.example b@evil.example>",
+            "Boss <a@evil.example, b@evil.example>",
+        ] {
+            // The author field itself must not yield a usable value...
+            assert_eq!(
+                author_from_result("from", Some(&json!({ "from": payload })), None),
+                None,
+                "a list must not become an author: {payload:?}"
+            );
+            // ...and even asserted on both sides, it must not authorise.
+            let verdict = classify(&[payload.to_string()], true, &[payload.to_string()]);
+            assert!(
+                !verdict.permits_exemption(),
+                "a bracketed list must not authorise, even against itself: {payload:?}"
             );
         }
     }

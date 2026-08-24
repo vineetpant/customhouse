@@ -4,7 +4,7 @@ Customhouse is a security tool, so it owes you a precise account of what it does
 and does not defend against. This document is that account. `DESIGN-v2.md` holds
 the full threat model; this is the operator-facing summary, kept honest.
 
-**Applies to:** v0.3.1. Pre-1.0 and not yet production-hardened.
+**Applies to:** v0.3.2. Pre-1.0 and not yet production-hardened.
 
 ## What Customhouse enforces today
 
@@ -127,8 +127,10 @@ The same applies to the recipient values themselves. A recipient authorises the
 exemption only if it identifies exactly one party: a bare address, or a display
 name with a single bracketed address and nothing after it. Anything else —
 trailing text after the closing `>`, more than one bracket pair, unbalanced
-brackets, or a bare value containing a comma, semicolon or internal space — is
-refused rather than salvaged. The same applies structurally: if a declared
+brackets, or a comma, semicolon or internal space anywhere in the value,
+including inside the brackets — is refused rather than salvaged. (v0.3.1 applied
+that last check only outside the brackets, so `<a@x, b@y>` slipped through; fixed
+in v0.3.2.) The same applies structurally: if a declared
 recipient field holds anything but a string or an array of strings, the whole
 recipient set is treated as unknown, because a value Customhouse cannot read may
 still be a recipient the upstream delivers to. The reason is that Customhouse must
