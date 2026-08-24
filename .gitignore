@@ -2,3 +2,8 @@
 **/*.rs.bk
 Cargo.lock.orig
 .DS_Store
+
+# Review files are working documents, not artefacts. They are superseded by
+# GitHub issues once their findings are filed, and one was committed by accident
+# via `git add -A` — this is the guard, since the rule alone was not enough.
+/REVIEW*.md

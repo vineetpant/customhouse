@@ -116,6 +116,11 @@ breadth and extra upstreams remain deferred until the AgentDojo numbers exist.
   (`Closes #N`), and let CI run before merge. `main` is what gets tagged and
   published, so it stays releasable at every commit — a red `main` means the
   release path is blocked for everyone, not just the author.
+- **Never `git add -A` / `git commit -a` without reading the staged file list
+  first.** A review file was swept into a commit and merged to a public repo
+  this way. Stage deliberately (`git add <paths>`), or run `git status --short`
+  and read it before committing. `/REVIEW*.md` is now gitignored, but the habit
+  is the actual fix: the next stray file will have a different name.
 - **Work is tracked as GitHub issues, not in review files.** A review produces
   issues; the review file is deleted once its findings are filed. An issue
   records the reproduction, the measurement and the proposed fix, so the next
